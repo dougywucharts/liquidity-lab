@@ -1,0 +1,1504 @@
+import { useEffect, useMemo, useState } from "react";
+import "./styles.css";
+
+const emptyForm = {
+  pair: "",
+  timeframe: "3m",
+  session: "New York",
+  directionBias: "Short",
+  eventType: "SWEEP_DETECTED",
+  sweepType: "High Sweep",
+  emaContext: "EMA99 Rejection",
+  action: "Taken",
+  timing: "On Confirmation",
+  planFollowed: "Yes",
+  ruleBreak: "None",
+  disciplineScore: 8,
+  setupQuality: 8,
+  emotionalPressure: 3,
+  entry: "",
+  stop: "",
+  exit: "",
+  tp1: "",
+  tp2: "",
+  pnl: "",
+  notes: "",
+  screenshot: "",
+  sourceType: "Event Response",
+  structure: "",
+};
+
+const STORAGE_KEYS = {
+  loggedDecisions: "liquidity_radar_logged_decisions",
+  propAccount: "liquidity_radar_prop_account",
+  radarVisibleCount: "liquidity_radar_visible_count",
+};
+
+function avg(values) {
+  if (!values.length) return 0;
+  return values.reduce((a, b) => a + Number(b || 0), 0) / values.length;
+}
+
+function num(value) {
+  if (value === "" || value === null || value === undefined) return 0;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function displayTime(ts) {
+  if (!ts) return "—";
+  try {
+    return new Date(ts).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function getBlofinUrl(pair) {
+  if (!pair) return "https://blofin.com";
+  return `https://blofin.com/futures/en/${pair.replace("/", "-")}`;
+}
+
+function getTradingViewSymbol(pair) {
+  const compact = (pair || "BTC/USDT").replace("/", "");
+  return `BLOFIN:${compact}`;
+}
+
+function getTradingViewInterval(timeframe) {
+  const map = {
+    "1m": "1",
+    "3m": "3",
+    "5m": "5",
+    "15m": "15",
+    "1h": "60",
+    "4h": "240",
+    "1d": "D",
+  };
+  return map[timeframe] || "3";
+}
+
+function calcRiskAmount(entry, stop, riskUnit = 1) {
+  const e = num(entry);
+  const s = num(stop);
+  if (!e || !s) return 0;
+  return Math.abs(e - s) * riskUnit;
+}
+
+function calcRR(entry, stop, target) {
+  const e = num(entry);
+  const s = num(stop);
+  const t = num(target);
+  const risk = Math.abs(e - s);
+  const reward = Math.abs(t - e);
+  if (!risk || !reward) return 0;
+  return reward / risk;
+}
+
+function getPropMetrics(propAccount) {
+  const dailyLossLimit = propAccount.accountSize * propAccount.dailyDrawdownPct;
+  const maxDrawdownLimit = propAccount.accountSize * propAccount.maxDrawdownPct;
+  const profitTarget = propAccount.accountSize * propAccount.profitTargetPct;
+
+  const dailyLossUsed = Math.max(0, -propAccount.dailyRealizedPnl);
+  const maxDrawdownUsed = Math.max(
+    0,
+    propAccount.startingBalance - propAccount.currentBalance
+  );
+
+  return {
+    dailyLossLimit,
+    maxDrawdownLimit,
+    profitTarget,
+    dailyLossUsed,
+    maxDrawdownUsed,
+    remainingDailyLoss: Math.max(0, dailyLossLimit - dailyLossUsed),
+    remainingMaxDrawdown: Math.max(0, maxDrawdownLimit - maxDrawdownUsed),
+  };
+}
+
+function evaluatePropCompliance(event, propAccount) {
+  if (!event || propAccount.mode !== "prop") {
+    return {
+      qualified: true,
+      notes: [],
+      riskAmount: 0,
+      rrToTp1: 0,
+      rrToTp2: 0,
+    };
+  }
+
+  const notes = [];
+  const metrics = getPropMetrics(propAccount);
+
+  const riskAmount = calcRiskAmount(event.entry, event.stop, 1);
+  const rrToTp1 = calcRR(event.entry, event.stop, event.tp1);
+  const rrToTp2 = calcRR(event.entry, event.stop, event.tp2);
+
+  if (!event.entry || !event.stop) notes.push("Missing entry/stop data");
+  if (riskAmount > propAccount.maxRiskPerTrade) notes.push("Risk exceeds max per trade");
+
+  const bestRR = Math.max(rrToTp1 || 0, rrToTp2 || 0);
+  if (bestRR && bestRR < propAccount.minRR) notes.push("RR below minimum");
+
+  if (propAccount.lossesToday >= propAccount.maxLossesPerDay) {
+    notes.push("Max losses for the day reached");
+  }
+
+  if (metrics.dailyLossUsed >= metrics.dailyLossLimit) {
+    notes.push("Daily drawdown limit reached");
+  }
+
+  if (metrics.maxDrawdownUsed >= metrics.maxDrawdownLimit) {
+    notes.push("Max overall drawdown reached");
+  }
+
+  if (
+    propAccount.dailyProfitLock &&
+    propAccount.dailyRealizedPnl >= propAccount.dailyProfitLock
+  ) {
+    notes.push("Daily profit lock reached");
+  }
+
+  return {
+    qualified: notes.length === 0,
+    notes,
+    riskAmount,
+    rrToTp1,
+    rrToTp2,
+  };
+}
+
+function safeReadStorage(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function eventKey(event) {
+  return (
+    event?.id ||
+    `${event?.pair}_${event?.timestampUtc}_${event?.eventType}_${event?.sweepType}`
+  );
+}
+
+export default function App() {
+  const [events, setEvents] = useState([]);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [logMode, setLogMode] = useState("event");
+  const [showPropAdvanced, setShowPropAdvanced] = useState(false);
+  const [decisionForm, setDecisionForm] = useState({ ...emptyForm });
+
+  const [loggedDecisions, setLoggedDecisions] = useState(() =>
+    safeReadStorage(STORAGE_KEYS.loggedDecisions, [])
+  );
+  const [pairFilter, setPairFilter] = useState("All");
+  const [sweepFilter, setSweepFilter] = useState("All");
+  const [feedStatus, setFeedStatus] = useState("Connecting...");
+  const [hideLoggedRadar, setHideLoggedRadar] = useState(true);
+  const [visibleCount, setVisibleCount] = useState(() =>
+    safeReadStorage(STORAGE_KEYS.radarVisibleCount, 12)
+  );
+
+  const [propAccount, setPropAccount] = useState(() =>
+    safeReadStorage(STORAGE_KEYS.propAccount, {
+      mode: "personal",
+      firmName: "Custom",
+      accountSize: 50000,
+      profitTargetPct: 0.08,
+      dailyDrawdownPct: 0.05,
+      maxDrawdownPct: 0.1,
+      maxRiskPerTrade: 75,
+      maxLossesPerDay: 2,
+      minRR: 1.5,
+      dailyProfitLock: 300,
+      startingBalance: 50000,
+      currentBalance: 50000,
+      dailyRealizedPnl: 0,
+      totalRealizedPnl: 0,
+      lossesToday: 0,
+      tradesToday: 0,
+    })
+  );
+
+  useEffect(() => {
+    localStorage.setItem(
+      STORAGE_KEYS.loggedDecisions,
+      JSON.stringify(loggedDecisions)
+    );
+  }, [loggedDecisions]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.propAccount, JSON.stringify(propAccount));
+  }, [propAccount]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.radarVisibleCount, JSON.stringify(visibleCount));
+  }, [visibleCount]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadEvents() {
+      try {
+        const res = await fetch("http://localhost:3001/events");
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        console.log("EVENT FEED RAW:", data);
+
+        if (!mounted) return;
+
+        if (!Array.isArray(data)) {
+          throw new Error("Feed did not return an array");
+        }
+
+        if (data.length === 0) {
+          setFeedStatus("Live Feed (0 events)");
+          return;
+        }
+
+        setFeedStatus(`Live Feed (${data.length})`);
+
+        setEvents((prev) => {
+          const merged = [...data, ...prev];
+          const seen = new Set();
+
+          const unique = merged.filter((item) => {
+            const key = eventKey(item);
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+
+          unique.sort(
+            (a, b) => new Date(b.timestampUtc || 0) - new Date(a.timestampUtc || 0)
+          );
+
+          return unique.slice(0, 200);
+        });
+
+        setSelectedEvent((prev) => {
+          if (prev) {
+            const existing = [...data].find((e) => eventKey(e) === eventKey(prev));
+            return existing || prev;
+          }
+          return data[0] || null;
+        });
+      } catch (err) {
+        console.error("EVENT FEED FAILED:", err);
+        if (!mounted) return;
+        setFeedStatus(`Feed Error: ${err.message}`);
+      }
+    }
+
+    loadEvents();
+    const timer = setInterval(loadEvents, 3000);
+
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, []);
+
+  const loggedEventIds = useMemo(() => {
+    return new Set(loggedDecisions.map((item) => item.linkedEventId).filter(Boolean));
+  }, [loggedDecisions]);
+
+  const pairOptions = useMemo(
+    () => ["All", ...new Set(events.map((e) => e.pair).filter(Boolean))],
+    [events]
+  );
+
+  const sweepOptions = useMemo(
+    () => ["All", ...new Set(events.map((e) => e.sweepType).filter(Boolean))],
+    [events]
+  );
+
+  const filteredEvents = useMemo(() => {
+    return events.filter((e) => {
+      const pairOk = pairFilter === "All" || e.pair === pairFilter;
+      const sweepOk = sweepFilter === "All" || e.sweepType === sweepFilter;
+      const loggedOk = !hideLoggedRadar || !loggedEventIds.has(e.id);
+      return pairOk && sweepOk && loggedOk;
+    });
+  }, [events, pairFilter, sweepFilter, hideLoggedRadar, loggedEventIds]);
+
+  const visibleEvents = useMemo(() => {
+    return filteredEvents.slice(0, visibleCount);
+  }, [filteredEvents, visibleCount]);
+
+  const stats = useMemo(() => {
+    const totalEvents = events.length;
+    const validSetups = events.filter((e) => e.reclaimConfirmed).length;
+    const takenTrades = loggedDecisions.filter((d) => d.action === "Taken").length;
+    const avgDiscipline = avg(loggedDecisions.map((d) => d.disciplineScore));
+    const avgSetup = avg(loggedDecisions.map((d) => d.setupQuality));
+
+    const biggestMistake =
+      Object.entries(
+        loggedDecisions.reduce((acc, item) => {
+          if (item.ruleBreak && item.ruleBreak !== "None") {
+            acc[item.ruleBreak] = (acc[item.ruleBreak] || 0) + 1;
+          }
+          return acc;
+        }, {})
+      ).sort((a, b) => b[1] - a[1])[0]?.[0] || "None";
+
+    return {
+      totalEvents,
+      validSetups,
+      takenTrades,
+      avgDiscipline,
+      avgSetup,
+      biggestMistake,
+    };
+  }, [events, loggedDecisions]);
+
+  const propMetrics = useMemo(() => getPropMetrics(propAccount), [propAccount]);
+
+  const effectiveComplianceTarget = useMemo(() => {
+    if (logMode === "manual") {
+      return {
+        pair: decisionForm.pair,
+        timeframe: decisionForm.timeframe,
+        session: decisionForm.session,
+        directionBias: decisionForm.directionBias,
+        eventType: decisionForm.eventType,
+        sweepType: decisionForm.sweepType,
+        emaContext: decisionForm.emaContext,
+        entry: decisionForm.entry,
+        stop: decisionForm.stop,
+        tp1: decisionForm.tp1,
+        tp2: decisionForm.tp2,
+      };
+    }
+
+    if (!selectedEvent) return null;
+
+    return {
+      ...selectedEvent,
+      entry: decisionForm.entry || selectedEvent.entry,
+      stop: decisionForm.stop || selectedEvent.stop,
+      tp1: decisionForm.tp1 || selectedEvent.tp1,
+      tp2: decisionForm.tp2 || selectedEvent.tp2,
+      timeframe: decisionForm.timeframe || selectedEvent.timeframe,
+      directionBias: decisionForm.directionBias || selectedEvent.directionBias,
+      sweepType: decisionForm.sweepType || selectedEvent.sweepType,
+      emaContext: decisionForm.emaContext || selectedEvent.emaContext,
+    };
+  }, [logMode, selectedEvent, decisionForm]);
+
+  const selectedCompliance = useMemo(() => {
+    return evaluatePropCompliance(effectiveComplianceTarget, propAccount);
+  }, [effectiveComplianceTarget, propAccount]);
+
+  const chartPair =
+    logMode === "manual"
+      ? decisionForm.pair || "BTC/USDT"
+      : selectedEvent?.pair || "BTC/USDT";
+
+  const activeTimeframe =
+    logMode === "manual"
+      ? decisionForm.timeframe || "3m"
+      : selectedEvent?.timeframe || decisionForm.timeframe || "3m";
+
+  const chartSymbol = getTradingViewSymbol(chartPair);
+  const chartInterval = getTradingViewInterval(activeTimeframe);
+  const blofinUrl = getBlofinUrl(chartPair);
+
+  function updateDecision(field, value) {
+    setDecisionForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function updateProp(field, value) {
+    setPropAccount((prev) => ({
+      ...prev,
+      [field]: typeof prev[field] === "number" ? Number(value) || 0 : value,
+    }));
+  }
+
+  function loadEvent(event) {
+    setSelectedEvent(event);
+    setLogMode("event");
+    setDecisionForm({
+      ...emptyForm,
+      pair: event.pair || "",
+      timeframe: event.timeframe || "3m",
+      session: event.session || "New York",
+      directionBias: event.directionBias || "Short",
+      eventType: event.eventType || "SWEEP_DETECTED",
+      sweepType: event.sweepType || "High Sweep",
+      emaContext: event.emaContext || "EMA99 Rejection",
+      entry: event.entry ?? "",
+      stop: event.stop ?? "",
+      tp1: event.tp1 ?? "",
+      tp2: event.tp2 ?? "",
+      structure: event.structure || "",
+    });
+  }
+
+  function switchToManualLog() {
+    setLogMode("manual");
+    setDecisionForm({
+      ...emptyForm,
+      pair: chartPair,
+      timeframe: activeTimeframe,
+    });
+  }
+
+  function saveDecision() {
+    const pair = (decisionForm.pair || "").trim();
+    if (!pair) {
+      alert("Please enter a pair.");
+      return;
+    }
+
+    const effectiveEvent =
+      logMode === "event" && selectedEvent
+        ? {
+            ...selectedEvent,
+            pair,
+            timeframe: decisionForm.timeframe,
+            session: decisionForm.session || selectedEvent.session,
+            directionBias: decisionForm.directionBias,
+            eventType: decisionForm.eventType || selectedEvent.eventType,
+            sweepType: decisionForm.sweepType,
+            emaContext: decisionForm.emaContext,
+            entry: decisionForm.entry || selectedEvent.entry,
+            stop: decisionForm.stop || selectedEvent.stop,
+            tp1: decisionForm.tp1 || selectedEvent.tp1,
+            tp2: decisionForm.tp2 || selectedEvent.tp2,
+          }
+        : {
+            pair,
+            timeframe: decisionForm.timeframe,
+            session: decisionForm.session,
+            directionBias: decisionForm.directionBias,
+            eventType: decisionForm.eventType,
+            sweepType: decisionForm.sweepType,
+            emaContext: decisionForm.emaContext,
+            entry: decisionForm.entry,
+            stop: decisionForm.stop,
+            tp1: decisionForm.tp1,
+            tp2: decisionForm.tp2,
+          };
+
+    const compliance = evaluatePropCompliance(effectiveEvent, propAccount);
+
+    const entry = {
+      id: `log_${Date.now()}`,
+      linkedEventId: logMode === "event" ? selectedEvent?.id || null : null,
+      timestampUtc: new Date().toISOString(),
+      displayTime:
+        logMode === "event" ? displayTime(selectedEvent?.timestampUtc) : "Manual",
+      pair,
+      timeframe: decisionForm.timeframe,
+      session: decisionForm.session,
+      directionBias: decisionForm.directionBias,
+      eventType: decisionForm.eventType,
+      sweepType: decisionForm.sweepType,
+      emaContext: decisionForm.emaContext,
+      action: decisionForm.action,
+      timing: decisionForm.timing,
+      planFollowed: decisionForm.planFollowed,
+      ruleBreak: decisionForm.ruleBreak,
+      disciplineScore: Number(decisionForm.disciplineScore),
+      setupQuality: Number(decisionForm.setupQuality),
+      emotionalPressure: Number(decisionForm.emotionalPressure),
+      entry: num(decisionForm.entry),
+      stop: num(decisionForm.stop),
+      exit: num(decisionForm.exit),
+      tp1: num(decisionForm.tp1),
+      tp2: num(decisionForm.tp2),
+      pnl: num(decisionForm.pnl),
+      notes: decisionForm.notes,
+      screenshot: decisionForm.screenshot,
+      structure: decisionForm.structure,
+      sourceType: logMode === "event" ? "Event Response" : "Manual Log",
+      riskAmount: compliance.riskAmount,
+      propQualified: compliance.qualified,
+      complianceNotes: compliance.notes,
+    };
+
+    setLoggedDecisions((prev) => [entry, ...prev]);
+
+    if (entry.action === "Taken") {
+      setPropAccount((prev) => {
+        const pnl = num(entry.pnl);
+        return {
+          ...prev,
+          tradesToday: prev.tradesToday + 1,
+          lossesToday: pnl < 0 ? prev.lossesToday + 1 : prev.lossesToday,
+          dailyRealizedPnl: prev.dailyRealizedPnl + pnl,
+          totalRealizedPnl: prev.totalRealizedPnl + pnl,
+          currentBalance: prev.currentBalance + pnl,
+        };
+      });
+    }
+
+    if (logMode === "event" && selectedEvent) {
+      setDecisionForm({
+        ...emptyForm,
+        pair: selectedEvent.pair || "",
+        timeframe: selectedEvent.timeframe || "3m",
+        session: selectedEvent.session || "New York",
+        directionBias: selectedEvent.directionBias || "Short",
+        eventType: selectedEvent.eventType || "SWEEP_DETECTED",
+        sweepType: selectedEvent.sweepType || "High Sweep",
+        emaContext: selectedEvent.emaContext || "EMA99 Rejection",
+        entry: selectedEvent.entry ?? "",
+        stop: selectedEvent.stop ?? "",
+        tp1: selectedEvent.tp1 ?? "",
+        tp2: selectedEvent.tp2 ?? "",
+        structure: selectedEvent.structure || "",
+      });
+    } else {
+      setDecisionForm({ ...emptyForm });
+    }
+  }
+
+  function exportJson() {
+    const exportPayload = {
+      exportedAt: new Date().toISOString(),
+      propAccount,
+      stats,
+      events,
+      loggedDecisions,
+    };
+
+    const dataStr = JSON.stringify(exportPayload, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "liquidity_radar_export.json";
+    a.click();
+
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <div className="app-shell">
+      <div className="top-stack">
+        <header className="hero-panel">
+          <div>
+            <div className="hero-badges">
+              <span className="hero-badge hero-badge-cyan">Liquidity Event Radar</span>
+              <span className="hero-badge">Sweep Intelligence Console</span>
+            </div>
+            <h1>Liquidity Event Radar</h1>
+            <p className="hero-text">
+              Live sweep flow, cleaner journaling, and rule-based execution in one view.
+            </p>
+          </div>
+
+          <div className="hero-side">
+            <div className="hero-side-item">
+              <span className="mini-label">Feed</span>
+              <strong>{feedStatus}</strong>
+            </div>
+            <div className="hero-side-item">
+              <span className="mini-label">Radar</span>
+              <strong>{filteredEvents.length} visible</strong>
+            </div>
+            <div className="hero-side-item">
+              <span className="mini-label">Logs</span>
+              <strong>{loggedDecisions.length} saved</strong>
+            </div>
+            <div className="hero-side-item">
+              <span className="mini-label">Mode</span>
+              <strong>{propAccount.mode === "prop" ? "Prop Rules" : "Personal"}</strong>
+            </div>
+          </div>
+        </header>
+
+        {events.length > 0 ? (
+          <div className="ticker-wrap">
+            <div className="ticker-track">
+              {[...events.slice(0, 25), ...events.slice(0, 25)].map((event, i) => (
+                <div key={`${eventKey(event)}_${i}`} className="ticker-item">
+                  <span className="ticker-time">{displayTime(event.timestampUtc)}</span>
+                  <span className="ticker-pair">{event.pair}</span>
+                  <span
+                    className={
+                      event.directionBias === "Long"
+                        ? "ticker-bias long"
+                        : "ticker-bias short"
+                    }
+                  >
+                    {event.directionBias}
+                  </span>
+                  <span className="ticker-detail">{event.sweepType}</span>
+                  <span className="ticker-detail">
+                    {Math.round((event.botConfidence || 0) * 100)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <section className="control-bar">
+          <div className="control-group">
+            <button
+              className={logMode === "event" ? "mode-btn active" : "mode-btn"}
+              onClick={() => selectedEvent && loadEvent(selectedEvent)}
+              type="button"
+            >
+              Event Log Mode
+            </button>
+            <button
+              className={logMode === "manual" ? "mode-btn active" : "mode-btn"}
+              onClick={switchToManualLog}
+              type="button"
+            >
+              Manual Log Mode
+            </button>
+          </div>
+
+          <div className="control-group">
+            <select value={pairFilter} onChange={(e) => setPairFilter(e.target.value)}>
+              {pairOptions.map((pair) => (
+                <option key={pair} value={pair}>
+                  {pair}
+                </option>
+              ))}
+            </select>
+
+            <select value={sweepFilter} onChange={(e) => setSweepFilter(e.target.value)}>
+              {sweepOptions.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+
+            <button
+              className={hideLoggedRadar ? "mode-btn active" : "mode-btn"}
+              onClick={() => setHideLoggedRadar((prev) => !prev)}
+              type="button"
+            >
+              {hideLoggedRadar ? "Hiding Logged" : "Showing Logged"}
+            </button>
+
+            <button className="mode-btn export" onClick={exportJson} type="button">
+              Export JSON
+            </button>
+          </div>
+        </section>
+
+        <section className="stats-grid">
+          <StatCard title="Sweep Events" value={stats.totalEvents} subtitle="Stored feed history" />
+          <StatCard title="Valid Setups" value={stats.validSetups} subtitle="Reclaim confirmed" />
+          <StatCard title="Trades Taken" value={stats.takenTrades} subtitle="Logged decisions" />
+          <StatCard
+            title="Discipline"
+            value={stats.avgDiscipline ? stats.avgDiscipline.toFixed(1) : "0.0"}
+            subtitle="Average score"
+          />
+          <StatCard
+            title="Setup Quality"
+            value={stats.avgSetup ? stats.avgSetup.toFixed(1) : "0.0"}
+            subtitle="Average score"
+          />
+          <StatCard
+            title="Top Mistake"
+            value={stats.biggestMistake}
+            subtitle="Most common issue"
+          />
+        </section>
+      </div>
+
+      <section className="workspace-grid">
+        <aside className="panel radar-panel">
+          <div className="panel-header">
+            <div>
+              <h2>Live Radar</h2>
+              <span className="panel-subtext">Recent actionable sweep flow</span>
+            </div>
+            <span className="mini-counter">
+              {visibleEvents.length} / {filteredEvents.length}
+            </span>
+          </div>
+
+          {visibleEvents.length === 0 ? (
+            <div className="empty-box">
+              No live events coming in yet.
+              <br />
+              <br />
+              Feed status: {feedStatus}
+            </div>
+          ) : (
+            <div className="event-list">
+              {visibleEvents.map((event) => (
+                <button
+                  key={eventKey(event)}
+                  className={
+                    selectedEvent?.id === event.id && logMode === "event"
+                      ? "event-card selected"
+                      : "event-card"
+                  }
+                  onClick={() => loadEvent(event)}
+                  type="button"
+                >
+                  <div className="event-card-compact-top">
+                    <div className="event-compact-main">
+                      <h3>{event.pair}</h3>
+                      <span
+                        className={
+                          event.directionBias === "Long"
+                            ? "pill win small"
+                            : "pill loss small"
+                        }
+                      >
+                        {event.directionBias}
+                      </span>
+                      <span className="pill small">{event.timeframe}</span>
+                    </div>
+                    <span className="event-time">{displayTime(event.timestampUtc)}</span>
+                  </div>
+
+                  <div className="event-compact-middle">
+                    <span className="event-line strong">{event.sweepType}</span>
+                    <span className="event-line">{event.emaContext}</span>
+                    <span className="event-line muted">
+                      {event.session} • {Math.round((event.botConfidence || 0) * 100)}% confidence
+                    </span>
+                  </div>
+
+                  <div className="event-actions compact-actions">
+                    <a
+                      href={getBlofinUrl(event.pair)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mini-link-btn"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      BloFin
+                    </a>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {filteredEvents.length > visibleCount ? (
+            <div className="radar-footer">
+              <button
+                className="mode-btn"
+                type="button"
+                onClick={() => setVisibleCount((prev) => prev + 8)}
+              >
+                Show More
+              </button>
+            </div>
+          ) : null}
+        </aside>
+
+        <main className="panel chart-panel">
+          <div className="panel-header">
+            <div>
+              <h2>Live Pattern Chart</h2>
+              <span className="panel-subtext">
+                {chartPair} • {activeTimeframe}
+              </span>
+            </div>
+          </div>
+
+          <div className="chart-toolbar">
+            <div className="selected-pills">
+              <span className="pill">
+                {logMode === "event" ? selectedEvent?.sweepType || "No Event" : decisionForm.sweepType}
+              </span>
+              <span className="pill">
+                {logMode === "event" ? selectedEvent?.emaContext || "Waiting" : decisionForm.emaContext}
+              </span>
+              <span className="pill">
+                {logMode === "event" ? selectedEvent?.session || "Waiting" : decisionForm.session}
+              </span>
+            </div>
+
+            <a href={blofinUrl} target="_blank" rel="noreferrer" className="mini-link-btn">
+              Open Full BloFin
+            </a>
+          </div>
+
+          <div className="chart-frame">
+            <iframe
+              key={`${chartSymbol}_${chartInterval}`}
+              title={`Chart for ${chartPair}`}
+              src={`https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=${encodeURIComponent(
+                chartSymbol
+              )}&interval=${encodeURIComponent(
+                chartInterval
+              )}&hidesidetoolbar=0&symboledit=1&saveimage=1&toolbarbg=0f172a&studies=[]&theme=dark&style=1&timezone=America%2FNew_York&withdateranges=1&hideideas=1`}
+              width="100%"
+              height="100%"
+              frameBorder="0"
+              allowTransparency="true"
+              scrolling="no"
+            />
+          </div>
+
+          <div className="chart-note">
+            Keep the chart visible while you log so the pattern stays tied to the decision.
+          </div>
+        </main>
+
+        <aside className="panel logger-panel">
+          <div className="panel-header">
+            <div>
+              <h2>{logMode === "event" ? "Trade Journal" : "Manual Trade Journal"}</h2>
+              <span className="panel-subtext">
+                {logMode === "event" ? "Respond to selected radar event" : "Log without event card"}
+              </span>
+            </div>
+          </div>
+
+          <div className="selected-summary">
+            <strong>
+              {logMode === "event" ? selectedEvent?.pair || "No Event Selected" : decisionForm.pair || "Manual Entry"}
+            </strong>
+            <div className="selected-pills">
+              <span className="pill small">
+                {logMode === "event" ? selectedEvent?.timeframe || "—" : decisionForm.timeframe}
+              </span>
+              <span className="pill small">
+                {logMode === "event" ? selectedEvent?.sweepType || "—" : decisionForm.sweepType}
+              </span>
+              <span className="pill small">
+                {logMode === "event" ? selectedEvent?.emaContext || "—" : decisionForm.emaContext}
+              </span>
+            </div>
+          </div>
+
+          {propAccount.mode === "prop" ? (
+            <div className={selectedCompliance.qualified ? "compliance-box pass" : "compliance-box fail"}>
+              <div className="compliance-top">
+                <strong>
+                  {selectedCompliance.qualified ? "Prop-Compliant Setup" : "Not Prop-Compliant"}
+                </strong>
+                <span className="pill small">
+                  Risk {selectedCompliance.riskAmount.toFixed(2)}
+                </span>
+              </div>
+
+              <div className="selected-pills">
+                <span className="pill small">RR1 {selectedCompliance.rrToTp1.toFixed(2)}</span>
+                <span className="pill small">RR2 {selectedCompliance.rrToTp2.toFixed(2)}</span>
+              </div>
+
+              {selectedCompliance.notes.length ? (
+                <ul className="compliance-list">
+                  {selectedCompliance.notes.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="compliance-ok">Setup passes current prop rules.</div>
+              )}
+            </div>
+          ) : null}
+
+          <div className="logger-scroll">
+            {logMode === "manual" && (
+              <>
+                <div className="form-grid two">
+                  <Field label="Pair">
+                    <input
+                      type="text"
+                      placeholder="SUI/USDT"
+                      value={decisionForm.pair}
+                      onChange={(e) => updateDecision("pair", e.target.value)}
+                    />
+                  </Field>
+
+                  <Field label="Timeframe">
+                    <select
+                      value={decisionForm.timeframe || "3m"}
+                      onChange={(e) => updateDecision("timeframe", e.target.value)}
+                    >
+                      <option value="1m">1m</option>
+                      <option value="3m">3m</option>
+                      <option value="5m">5m</option>
+                      <option value="15m">15m</option>
+                      <option value="1h">1h</option>
+                    </select>
+                  </Field>
+                </div>
+
+                <div className="form-grid two">
+                  <Field label="Direction Bias">
+                    <select
+                      value={decisionForm.directionBias || "Short"}
+                      onChange={(e) => updateDecision("directionBias", e.target.value)}
+                    >
+                      <option value="Long">Long</option>
+                      <option value="Short">Short</option>
+                    </select>
+                  </Field>
+
+                  <Field label="Session">
+                    <select
+                      value={decisionForm.session || "New York"}
+                      onChange={(e) => updateDecision("session", e.target.value)}
+                    >
+                      <option value="Asia">Asia</option>
+                      <option value="London">London</option>
+                      <option value="New York">New York</option>
+                    </select>
+                  </Field>
+                </div>
+
+                <div className="form-grid two">
+                  <Field label="Event Type">
+                    <select
+                      value={decisionForm.eventType || "SWEEP_DETECTED"}
+                      onChange={(e) => updateDecision("eventType", e.target.value)}
+                    >
+                      <option value="SWEEP_DETECTED">SWEEP_DETECTED</option>
+                      <option value="SWEEP_RECLAIM">SWEEP_RECLAIM</option>
+                      <option value="SWEEP_ACCEPTED">SWEEP_ACCEPTED</option>
+                      <option value="SWEEP_CONFIRMED">SWEEP_CONFIRMED</option>
+                      <option value="DOUBLE_SWEEP">DOUBLE_SWEEP</option>
+                    </select>
+                  </Field>
+
+                  <Field label="Sweep Type">
+                    <select
+                      value={decisionForm.sweepType || "High Sweep"}
+                      onChange={(e) => updateDecision("sweepType", e.target.value)}
+                    >
+                      <option value="High Sweep">High Sweep</option>
+                      <option value="Low Sweep">Low Sweep</option>
+                      <option value="Double Tap High">Double Tap High</option>
+                      <option value="Double Tap Low">Double Tap Low</option>
+                    </select>
+                  </Field>
+                </div>
+
+                <div className="form-grid two">
+                  <Field label="EMA Context">
+                    <select
+                      value={decisionForm.emaContext || "EMA99 Rejection"}
+                      onChange={(e) => updateDecision("emaContext", e.target.value)}
+                    >
+                      <option value="EMA9 Reclaim">EMA9 Reclaim</option>
+                      <option value="EMA25 Reclaim">EMA25 Reclaim</option>
+                      <option value="EMA25 Rejection">EMA25 Rejection</option>
+                      <option value="EMA99 Rejection">EMA99 Rejection</option>
+                      <option value="EMA99 Hold">EMA99 Hold</option>
+                    </select>
+                  </Field>
+
+                  <Field label="Structure">
+                    <input
+                      type="text"
+                      placeholder="Range high liquidity clear"
+                      value={decisionForm.structure || ""}
+                      onChange={(e) => updateDecision("structure", e.target.value)}
+                    />
+                  </Field>
+                </div>
+              </>
+            )}
+
+            <div className="form-grid two">
+              <Field label="Action Taken">
+                <select
+                  value={decisionForm.action || "Taken"}
+                  onChange={(e) => updateDecision("action", e.target.value)}
+                >
+                  <option value="Taken">Taken</option>
+                  <option value="Skipped">Skipped</option>
+                  <option value="Missed">Missed</option>
+                  <option value="Watched Only">Watched Only</option>
+                </select>
+              </Field>
+
+              <Field label="Entry Timing">
+                <select
+                  value={decisionForm.timing || "On Confirmation"}
+                  onChange={(e) => updateDecision("timing", e.target.value)}
+                >
+                  <option value="On Confirmation">On Confirmation</option>
+                  <option value="Early">Early</option>
+                  <option value="Late">Late</option>
+                  <option value="Chase Entry">Chase Entry</option>
+                </select>
+              </Field>
+            </div>
+
+            <div className="form-grid two">
+              <Field label="Plan Adherence">
+                <select
+                  value={decisionForm.planFollowed || "Yes"}
+                  onChange={(e) => updateDecision("planFollowed", e.target.value)}
+                >
+                  <option value="Yes">Yes</option>
+                  <option value="Mostly">Mostly</option>
+                  <option value="No">No</option>
+                </select>
+              </Field>
+
+              <Field label="Execution Mistake">
+                <select
+                  value={decisionForm.ruleBreak || "None"}
+                  onChange={(e) => updateDecision("ruleBreak", e.target.value)}
+                >
+                  <option value="None">None</option>
+                  <option value="Entered before confirmation">Entered before confirmation</option>
+                  <option value="Chased move">Chased move</option>
+                  <option value="Forced trade">Forced trade</option>
+                  <option value="Ignored invalidation">Ignored invalidation</option>
+                  <option value="Moved stop">Moved stop</option>
+                  <option value="Closed early">Closed early</option>
+                  <option value="Over leveraged">Over leveraged</option>
+                  <option value="Revenge trade">Revenge trade</option>
+                </select>
+              </Field>
+            </div>
+
+            <div className="form-grid three">
+              <Field label="Discipline Score">
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={decisionForm.disciplineScore}
+                  onChange={(e) => updateDecision("disciplineScore", e.target.value)}
+                />
+              </Field>
+
+              <Field label="Setup Quality">
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={decisionForm.setupQuality}
+                  onChange={(e) => updateDecision("setupQuality", e.target.value)}
+                />
+              </Field>
+
+              <Field label="Emotional Pressure">
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={decisionForm.emotionalPressure}
+                  onChange={(e) => updateDecision("emotionalPressure", e.target.value)}
+                />
+              </Field>
+            </div>
+
+            <div className="form-grid two">
+              <Field label="Entry">
+                <input
+                  type="number"
+                  step="any"
+                  value={decisionForm.entry}
+                  onChange={(e) => updateDecision("entry", e.target.value)}
+                />
+              </Field>
+
+              <Field label="Stop">
+                <input
+                  type="number"
+                  step="any"
+                  value={decisionForm.stop}
+                  onChange={(e) => updateDecision("stop", e.target.value)}
+                />
+              </Field>
+            </div>
+
+            <div className="form-grid three">
+              <Field label="TP1">
+                <input
+                  type="number"
+                  step="any"
+                  value={decisionForm.tp1}
+                  onChange={(e) => updateDecision("tp1", e.target.value)}
+                />
+              </Field>
+
+              <Field label="TP2">
+                <input
+                  type="number"
+                  step="any"
+                  value={decisionForm.tp2}
+                  onChange={(e) => updateDecision("tp2", e.target.value)}
+                />
+              </Field>
+
+              <Field label="Exit">
+                <input
+                  type="number"
+                  step="any"
+                  value={decisionForm.exit}
+                  onChange={(e) => updateDecision("exit", e.target.value)}
+                />
+              </Field>
+            </div>
+
+            <div className="form-grid one">
+              <Field label="PnL">
+                <input
+                  type="number"
+                  step="any"
+                  value={decisionForm.pnl}
+                  onChange={(e) => updateDecision("pnl", e.target.value)}
+                />
+              </Field>
+            </div>
+
+            <Field label="Decision Notes">
+              <textarea
+                rows="5"
+                placeholder="Why did you take or skip it? What made it valid or invalid?"
+                value={decisionForm.notes}
+                onChange={(e) => updateDecision("notes", e.target.value)}
+              />
+            </Field>
+
+            <Field label="Chart Screenshot">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => updateDecision("screenshot", reader.result);
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </Field>
+
+            {decisionForm.screenshot ? (
+              <div className="screenshot-preview">
+                <img src={decisionForm.screenshot} alt="Decision screenshot preview" />
+              </div>
+            ) : null}
+          </div>
+
+          <div className="button-row logger-actions">
+            <button className="btn primary" onClick={saveDecision} type="button">
+              Log Trade
+            </button>
+            <a href={blofinUrl} target="_blank" rel="noreferrer" className="btn secondary link-btn">
+              Open on BloFin
+            </a>
+          </div>
+        </aside>
+      </section>
+
+      <section className="bottom-section">
+        <div className="panel">
+          <div className="panel-header">
+            <div>
+              <h2>Recent Trade Logs</h2>
+              <span className="panel-subtext">Saved event responses and manual journal entries</span>
+            </div>
+          </div>
+
+          {loggedDecisions.length === 0 ? (
+            <div className="empty-box">
+              No logs yet. Select a radar event or switch to manual mode.
+            </div>
+          ) : (
+            <div className="response-list horizontal">
+              {loggedDecisions.map((item) => (
+                <div className="response-card" key={item.id}>
+                  <div className="response-top">
+                    <div className="response-title-row">
+                      <h3>{item.pair}</h3>
+                      <span className="pill small">{item.sweepType}</span>
+                      <span className="pill small">{item.emaContext}</span>
+                      <span className="pill bot small">{item.sourceType}</span>
+                    </div>
+                    <span className="event-time">{item.displayTime}</span>
+                  </div>
+
+                  <div className="response-grid">
+                    <MiniBox label="Action" value={item.action} />
+                    <MiniBox label="Timing" value={item.timing} />
+                    <MiniBox label="Plan" value={item.planFollowed} />
+                    <MiniBox label="Mistake" value={item.ruleBreak} />
+                    <MiniBox label="Discipline" value={item.disciplineScore} />
+                    <MiniBox label="Pressure" value={item.emotionalPressure} />
+                  </div>
+
+                  {item.entry || item.stop || item.tp1 || item.tp2 ? (
+                    <div className="response-grid">
+                      <MiniBox label="Entry" value={item.entry || "—"} />
+                      <MiniBox label="Stop" value={item.stop || "—"} />
+                      <MiniBox label="TP1" value={item.tp1 || "—"} />
+                      <MiniBox label="TP2" value={item.tp2 || "—"} />
+                      <MiniBox label="PnL" value={item.pnl || "—"} />
+                      <MiniBox
+                        label="Risk"
+                        value={item.riskAmount?.toFixed?.(2) || "—"}
+                      />
+                    </div>
+                  ) : null}
+
+                  {item.propQualified !== undefined ? (
+                    <div className={item.propQualified ? "compliance-box pass" : "compliance-box fail"}>
+                      <strong>{item.propQualified ? "Prop Qualified" : "Prop Rejected"}</strong>
+                      {item.riskAmount ? (
+                        <div className="mini-label">Risk: {Number(item.riskAmount).toFixed(2)}</div>
+                      ) : null}
+                      {item.complianceNotes?.length ? (
+                        <ul className="compliance-list">
+                          {item.complianceNotes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {item.notes ? <p className="response-notes">{item.notes}</p> : null}
+
+                  {item.screenshot ? (
+                    <div className="response-screenshot">
+                      <img src={item.screenshot} alt={`${item.pair} screenshot`} />
+                    </div>
+                  ) : null}
+
+                  <div className="event-actions">
+                    <a
+                      href={getBlofinUrl(item.pair)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mini-link-btn"
+                    >
+                      Open on BloFin
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="bottom-section">
+        <div className="panel prop-panel compact">
+          <div className="panel-header">
+            <div>
+              <h2>Prop Rules</h2>
+              <span className="panel-subtext">Kept lower so the live workflow stays front and center</span>
+            </div>
+
+            <button
+              className="mode-btn"
+              onClick={() => setShowPropAdvanced((prev) => !prev)}
+              type="button"
+            >
+              {showPropAdvanced ? "Hide Advanced" : "Show Advanced"}
+            </button>
+          </div>
+
+          <div className="prop-compact-grid">
+            <Field label="Mode">
+              <select
+                value={propAccount.mode}
+                onChange={(e) => updateProp("mode", e.target.value)}
+              >
+                <option value="personal">Personal</option>
+                <option value="prop">Prop</option>
+              </select>
+            </Field>
+
+            <Field label="Account Size">
+              <input
+                type="number"
+                value={propAccount.accountSize}
+                onChange={(e) => updateProp("accountSize", e.target.value)}
+              />
+            </Field>
+
+            <Field label="Max Risk / Trade">
+              <input
+                type="number"
+                value={propAccount.maxRiskPerTrade}
+                onChange={(e) => updateProp("maxRiskPerTrade", e.target.value)}
+              />
+            </Field>
+
+            <Field label="Min RR">
+              <input
+                type="number"
+                step="0.1"
+                value={propAccount.minRR}
+                onChange={(e) => updateProp("minRR", e.target.value)}
+              />
+            </Field>
+          </div>
+
+          <div className="prop-summary-strip">
+            <div className="prop-summary-card">
+              <span className="mini-label">Daily DD Used</span>
+              <strong>{propMetrics.dailyLossUsed.toFixed(0)}</strong>
+              <span className="prop-sub">
+                / {propMetrics.dailyLossLimit.toFixed(0)}
+              </span>
+            </div>
+
+            <div className="prop-summary-card">
+              <span className="mini-label">Remaining Daily</span>
+              <strong>{propMetrics.remainingDailyLoss.toFixed(0)}</strong>
+              <span className="prop-sub">Loss room left</span>
+            </div>
+
+            <div className="prop-summary-card">
+              <span className="mini-label">Losses Today</span>
+              <strong>{propAccount.lossesToday}</strong>
+              <span className="prop-sub">
+                / {propAccount.maxLossesPerDay}
+              </span>
+            </div>
+          </div>
+
+          {showPropAdvanced ? (
+            <div className="prop-advanced-wrap">
+              <div className="form-grid two">
+                <Field label="Firm">
+                  <select
+                    value={propAccount.firmName}
+                    onChange={(e) => updateProp("firmName", e.target.value)}
+                  >
+                    <option value="Custom">Custom</option>
+                    <option value="FTMO">FTMO</option>
+                    <option value="FundedNext">FundedNext</option>
+                    <option value="The5ers">The5ers</option>
+                  </select>
+                </Field>
+
+                <Field label="Daily Profit Lock">
+                  <input
+                    type="number"
+                    value={propAccount.dailyProfitLock}
+                    onChange={(e) => updateProp("dailyProfitLock", e.target.value)}
+                  />
+                </Field>
+              </div>
+
+              <div className="form-grid three">
+                <Field label="Profit Target %">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={propAccount.profitTargetPct}
+                    onChange={(e) => updateProp("profitTargetPct", e.target.value)}
+                  />
+                </Field>
+
+                <Field label="Daily DD %">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={propAccount.dailyDrawdownPct}
+                    onChange={(e) => updateProp("dailyDrawdownPct", e.target.value)}
+                  />
+                </Field>
+
+                <Field label="Max DD %">
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={propAccount.maxDrawdownPct}
+                    onChange={(e) => updateProp("maxDrawdownPct", e.target.value)}
+                  />
+                </Field>
+              </div>
+
+              <div className="form-grid three">
+                <Field label="Max Losses / Day">
+                  <input
+                    type="number"
+                    value={propAccount.maxLossesPerDay}
+                    onChange={(e) => updateProp("maxLossesPerDay", e.target.value)}
+                  />
+                </Field>
+
+                <Field label="Starting Balance">
+                  <input
+                    type="number"
+                    value={propAccount.startingBalance}
+                    onChange={(e) => updateProp("startingBalance", e.target.value)}
+                  />
+                </Field>
+
+                <Field label="Current Balance">
+                  <input
+                    type="number"
+                    value={propAccount.currentBalance}
+                    onChange={(e) => updateProp("currentBalance", e.target.value)}
+                  />
+                </Field>
+              </div>
+
+              <div className="stats-grid compact-prop-stats">
+                <StatCard
+                  title="Profit Target"
+                  value={propMetrics.profitTarget.toFixed(0)}
+                  subtitle="Target dollars"
+                />
+                <StatCard
+                  title="Daily DD Limit"
+                  value={propMetrics.dailyLossLimit.toFixed(0)}
+                  subtitle="Max daily loss"
+                />
+                <StatCard
+                  title="Max DD Used"
+                  value={propMetrics.maxDrawdownUsed.toFixed(0)}
+                  subtitle="Overall drawdown"
+                />
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function StatCard({ title, value, subtitle }) {
+  return (
+    <div className="stat-card">
+      <div className="mini-label">{title}</div>
+      <div className="stat-value">{value}</div>
+      <div className="stat-sub">{subtitle}</div>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function MiniBox({ label, value }) {
+  return (
+    <div className="mini-box">
+      <span className="mini-label">{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}

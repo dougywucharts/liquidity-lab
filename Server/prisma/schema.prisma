@@ -1,0 +1,98 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "./generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id                 String     @id @default(cuid())
+  email              String     @unique
+  passwordHash       String
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  logs               TradeLog[]
+  stripeCustomerId   String?    @unique
+  stripeSubId        String?    @unique
+  stripePriceId      String?
+  billingStatus      String?    // active, trialing, past_due, canceled, unpaid, incomplete
+  billingPlan        String?    // starter, core, pro
+  billingPeriodEnd   DateTime?
+  isActive           Boolean    @default(false)
+}
+
+model TradeLog {
+  id                  String    @id @default(cuid())
+  userId              String
+
+  pair                String?
+  timeframe           String?
+  session             String?
+  action              String?
+  pnl                 Float?
+  notes               String?
+  leverage            Float?
+
+  entry               Float?
+  stop                Float?
+  tp1                 Float?
+  tp2                 Float?
+  rr1                 Float?
+  rr2                 Float?
+
+  directionBias       String?
+  eventType           String?
+  sweepType           String?
+  emaContext          String?
+  reclaimConfirmed    Boolean?
+  planFollowed        String?
+  ruleBreak           String?
+
+  executionType       String?
+  liquidityLevel      String?
+  htfBias             String?
+  entryTrigger        String?
+  outcome             String?
+  confidenceSelf      Float?
+  durationMinutes     Float?
+
+  emotionalPressure   Float?
+  setupQuality        Float?
+  disciplineScore     Float?
+  linkedEventId       String?
+
+  screenshotUrl       String?
+
+  aiScore             Int?
+  aiGrade             String?
+  aiSummary           String?
+  aiCoachingNote      String?
+  aiStatus            String?
+
+  setupScore          Int?
+  executionScore      Int?
+  managementScore     Int?
+  disciplineScoreAi   Int?
+  aiConfidence        Float?
+
+  chartRead           String?
+  setupAssessment     String?
+  executionAssessment String?
+  riskAssessment      String?
+  biasAlignment       String?
+
+  mistakeTags         Json?
+  whatWasGood         Json?
+  whatNeedsWork       Json?
+  usedScreenshot      Boolean?
+  aiPayload           Json?
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
