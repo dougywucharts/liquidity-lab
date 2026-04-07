@@ -174,9 +174,10 @@ app.post("/billing/webhook", express.raw({ type: "application/json" }), async (r
 // ==================================================
 const allowedOrigins = [
   "http://localhost:5173",
+  "http://localhost:5174",
   "https://redoctobersystems.com",
   "https://www.redoctobersystems.com",
-  "https://project-fjycv.vercel.app"
+  "https://project-fjycv.vercel.app",
 ];
 
 app.use(
@@ -185,6 +186,7 @@ app.use(
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
+      console.log("Blocked by CORS:", origin);
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
