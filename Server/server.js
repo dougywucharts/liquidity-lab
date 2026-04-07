@@ -172,7 +172,6 @@ app.post("/billing/webhook", express.raw({ type: "application/json" }), async (r
 // ==================================================
 // NORMAL MIDDLEWARE AFTER WEBHOOK
 // ==================================================
-app.use(cors({ origin: CLIENT_ORIGIN, credentials: true }));
 const allowedOrigins = [
   "http://localhost:5173",
   "https://redoctobersystems.com",
@@ -182,7 +181,7 @@ const allowedOrigins = [
 
 app.use(
   cors({
-    origin: function (origin, callback) {
+    origin(origin, callback) {
       if (!origin || allowedOrigins.includes(origin)) {
         return callback(null, true);
       }
