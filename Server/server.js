@@ -28,6 +28,30 @@ const STRIPE_PRICE_PRO = process.env.STRIPE_PRICE_PRO || "";
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 
 // ==================================================
+// PLAN LIMITS
+// ==================================================
+const PLAN_RULES = {
+  starter: {
+    logLimit: 100,
+    canUseScreenshots: false,
+    screenshotHourlyLimit: 0,
+    screenshotDailyLimit: 0,
+  },
+  core: {
+    logLimit: 500,
+    canUseScreenshots: true,
+    screenshotHourlyLimit: 2,
+    screenshotDailyLimit: 5,
+  },
+  pro: {
+    logLimit: 2000,
+    canUseScreenshots: true,
+    screenshotHourlyLimit: 5,
+    screenshotDailyLimit: 25,
+  },
+};
+
+// ==================================================
 // DB
 // ==================================================
 const pool = new Pool({
@@ -193,8 +217,6 @@ app.use(
   })
 );
 
-
-
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -210,7 +232,10 @@ const AI_ONLY_WITH_SCREENSHOT = true;
 const AI_ONLY_FOR_TAKEN_TRADES = true;
 const AI_ONLY_FOR_L3 = false;
 const AI_MIN_GAP_MS = 10000;
+const SCREENSHOT_COOLDOWN_MS = 15000;
+
 let lastAIRequestAt = 0;
+const lastScreenshotAt = {};
 
 // ==================================================
 // IN-MEMORY RADAR
@@ -415,6 +440,31 @@ function buildTradePayload(body) {
     screenshotBase64: safeString(body.screenshotBase64) || null,
     screenshotMimeType: safeString(body.screenshotMimeType) || null,
   };
+}
+
+async function getScreenshotUsage(userId) {
+  const now = new Date();
+  const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+  const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+  const [hourCount, dayCount] = await Promise.all([
+    prisma.tradeLog.count({
+      where: {
+        userId,
+        usedScreenshot: true,
+        createdAt: { gte: hourAgo },
+      },
+    }),
+    prisma.tradeLog.count({
+      where: {
+        userId,
+        usedScreenshot: true,
+        createdAt: { gte: dayAgo },
+      },
+    }),
+  ]);
+
+  return { hourCount, dayCount };
 }
 
 function computeFallbackAnalysis(trade, linkedRadarEvent = null) {
@@ -909,6 +959,42 @@ app.post("/logs", requireAuth, requireActiveSub, async (req, res) => {
       return res.status(400).json({ error: "timeframe is required" });
     }
 
+    const rules = PLAN_RULES[req.userPlan] || PLAN_RULES.starter;
+    const hasScreenshot = Boolean(trade.screenshotUrl || trade.screenshotBase64);
+
+    if (hasScreenshot) {
+      if (!rules.canUseScreenshots) {
+        return res.status(403).json({
+          error: "Screenshot analysis is not available on your plan.",
+        });
+      }
+
+      const last = lastScreenshotAt[req.user.userId] || 0;
+      const now = Date.now();
+
+      if (now - last < SCREENSHOT_COOLDOWN_MS) {
+        return res.status(429).json({
+          error: "Slow down. Screenshot cooldown active.",
+        });
+      }
+
+      const usage = await getScreenshotUsage(req.user.userId);
+
+      if (usage.hourCount >= rules.screenshotHourlyLimit) {
+        return res.status(429).json({
+          error: "Hourly screenshot limit reached. Try again soon.",
+        });
+      }
+
+      if (usage.dayCount >= rules.screenshotDailyLimit) {
+        return res.status(429).json({
+          error: "Daily screenshot limit reached. Upgrade for higher limits.",
+        });
+      }
+
+      lastScreenshotAt[req.user.userId] = now;
+    }
+
     const linkedRadarEvent = findLinkedRadarEvent(trade);
 
     let aiAnalysis;
@@ -1003,15 +1089,12 @@ app.post("/logs", requireAuth, requireActiveSub, async (req, res) => {
 
 app.get("/logs", requireAuth, requireActiveSub, async (req, res) => {
   try {
-    const take =
-      req.userPlan === "starter" ? 100 :
-      req.userPlan === "core" ? 500 :
-      2000;
+    const rules = PLAN_RULES[req.userPlan] || PLAN_RULES.starter;
 
     const logs = await prisma.tradeLog.findMany({
       where: { userId: req.user.userId },
       orderBy: { createdAt: "desc" },
-      take,
+      take: rules.logLimit,
     });
 
     res.json({ ok: true, logs });
@@ -1023,15 +1106,12 @@ app.get("/logs", requireAuth, requireActiveSub, async (req, res) => {
 
 app.get("/stats/summary", requireAuth, requireActiveSub, async (req, res) => {
   try {
-    const take =
-      req.userPlan === "starter" ? 100 :
-      req.userPlan === "core" ? 500 :
-      2000;
+    const rules = PLAN_RULES[req.userPlan] || PLAN_RULES.starter;
 
     const logs = await prisma.tradeLog.findMany({
       where: { userId: req.user.userId },
       orderBy: { createdAt: "desc" },
-      take,
+      take: rules.logLimit,
     });
 
     const total = logs.length;
