@@ -1,0 +1,32 @@
+-- CreateTable
+CREATE TABLE "TradeLog" (
+    "id" TEXT NOT NULL,
+    "userId" TEXT,
+    "pair" TEXT NOT NULL,
+    "timeframe" TEXT NOT NULL,
+    "action" TEXT NOT NULL,
+    "pnl" DOUBLE PRECISION,
+    "notes" TEXT,
+    "signalLevel" TEXT,
+    "leverage" DOUBLE PRECISION,
+    "timing" TEXT,
+    "planFollowed" TEXT,
+    "ruleBreak" TEXT,
+    "disciplineScore" INTEGER,
+    "setupQuality" INTEGER,
+    "emotionalPressure" INTEGER,
+    "attemptTag" TEXT,
+    "aiScore" INTEGER,
+    "aiGrade" TEXT,
+    "aiClassification" TEXT,
+    "aiSetupFit" TEXT,
+    "aiTiming" TEXT,
+    "aiRiskQuality" TEXT,
+    "aiSummary" TEXT,
+    "aiCoachingNote" TEXT,
+    "aiNextFocus" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "TradeLog_pkey" PRIMARY KEY ("id")
+);
