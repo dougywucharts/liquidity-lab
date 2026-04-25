@@ -4,3 +4,9 @@ dist
 build
 .vscode
 .DS_Store
+node_modules/
+client/node_modules/
+Server/node_modules/
+.env
+dist/
+build/
