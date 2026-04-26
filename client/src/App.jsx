@@ -1639,6 +1639,34 @@ function SessionClockWidget() {
   );
 }
 
+// 👇 ADD HERE
+function getSignalAgeMinutes(timestampUtc) {
+  const d = parseEventDate(timestampUtc);
+  if (!d) return 999;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
+}
+
+function getSignalState(timestampUtc) {
+  const age = getSignalAgeMinutes(timestampUtc);
+
+  if (age <= 3) return "LIVE";
+  if (age <= 10) return "AGING";
+  return "EXPIRED";
+}
+
+function getSignalCountdown(timestampUtc) {
+  const d = parseEventDate(timestampUtc);
+  if (!d) return "—";
+
+  const ageMs = Date.now() - d.getTime();
+  const remainingMs = Math.max(0, 3 * 60 * 1000 - ageMs);
+
+  const min = Math.floor(remainingMs / 60000);
+  const sec = Math.floor((remainingMs % 60000) / 1000);
+
+  return `${min}:${String(sec).padStart(2, "0")}`;
+}
+
 export default function AppPreBeta() {
   const [events, setEvents] = useState([]);
   const [expandedWaves, setExpandedWaves] = useState({});
@@ -1768,15 +1796,19 @@ export default function AppPreBeta() {
 
   function toast(message, type = "info") {
     const id = `${Date.now()}_${Math.random()}`;
-    setToasts((prev) => [...prev, { id, message, type }]);
 
-    const timer = window.setTimeout(() => {
-      if (!isMountedRef.current) return;
+    setToasts((prev) => [
+      ...prev,
+      {
+        id,
+        message,
+        type,
+      },
+    ]);
+
+    setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-      delete toastTimersRef.current[id];
-    }, 2600);
-
-    toastTimersRef.current[id] = timer;
+    }, 3200);
   }
 
   function requireFeature(featureKey, message = "Upgrade required.") {
@@ -1944,6 +1976,64 @@ export default function AppPreBeta() {
     `&hideideas=1`;
 
   const waves = useMemo(() => groupWaves(events), [events]);
+
+  // ACTIVE WAVES GOES HERE
+  const activeWaves = useMemo(() => {
+    return waves
+      .map((wave) => {
+        const freshEvents = (wave.events || []).filter(
+          (evt) => getSignalState(evt.timestampUtc) !== "EXPIRED",
+        );
+
+        if (!freshEvents.length) return null;
+
+        return {
+          ...wave,
+          events: freshEvents,
+          state: getSignalState(freshEvents[0]?.timestampUtc),
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        const stateRank = { LIVE: 0, AGING: 1, EXPIRED: 2 };
+
+        const aRank = stateRank[a.state] ?? 9;
+        const bRank = stateRank[b.state] ?? 9;
+
+        if (aRank !== bRank) return aRank - bRank;
+
+        return (
+          parseEventDate(b.events?.[0]?.timestampUtc).getTime() -
+          parseEventDate(a.events?.[0]?.timestampUtc).getTime()
+        );
+      });
+  }, [waves]);
+
+  const visibleWaves = useMemo(() => {
+    const byPair = new Map();
+
+    activeWaves.forEach((wave) => {
+      const key = `${wave.pair}|${wave.directionBias}`;
+      const existing = byPair.get(key);
+
+      if (!existing) {
+        byPair.set(key, wave);
+        return;
+      }
+
+      const waveTime = parseEventDate(wave.events?.[0]?.timestampUtc).getTime();
+      const existingTime = parseEventDate(
+        existing.events?.[0]?.timestampUtc,
+      ).getTime();
+
+      if (waveTime > existingTime) {
+        byPair.set(key, wave);
+      }
+    });
+
+    return Array.from(byPair.values()).slice(0, 8);
+  }, [activeWaves]);
+
   const tickerItems = useMemo(() => bestTickerItems(waves, 10), [waves]);
   const topTickerWaveKey = tickerItems?.[0]?._wave?.key || null;
 
@@ -2802,20 +2892,68 @@ export default function AppPreBeta() {
                   Grouped by wave, most recent first.
                 </div>
               </div>
-              <Pill>{waves.length} waves</Pill>
+              <Pill>{visibleWaves.length} active</Pill>
             </div>
 
             <div
               style={{
                 ...styles.panelBody,
                 ...styles.radarList,
+                minWidth: 0,
+                overflowX: "hidden",
               }}
             >
-              {waves.length > 0 ? (
-                waves.map((wave) => {
+              {visibleWaves.length > 0 ? (
+                visibleWaves.map((wave) => {
                   const tone = directionTone(wave.directionBias);
                   const isExpanded = Boolean(expandedWaves[wave.key]);
 
+                  const signalState =
+                    wave.state ||
+                    getSignalState(wave.events?.[0]?.timestampUtc);
+                  const signalStateStyle =
+                    signalState === "LIVE"
+                      ? {
+                          opacity: 1,
+                          borderColor:
+                            tone === "long"
+                              ? "rgba(74,222,128,0.45)"
+                              : tone === "short"
+                                ? "rgba(251,113,133,0.48)"
+                                : "rgba(246,196,83,0.45)",
+                          background:
+                            tone === "long"
+                              ? "rgba(74,222,128,0.02)" // 👈 toned down
+                              : tone === "short"
+                                ? "rgba(251,113,133,0.025)"
+                                : "rgba(246,196,83,0.02)",
+
+                          // 👇 ADD THIS
+                          borderLeft:
+                            tone === "long"
+                              ? "3px solid rgba(74,222,128,0.7)"
+                              : tone === "short"
+                                ? "3px solid rgba(251,113,133,0.7)"
+                                : "3px solid rgba(246,196,83,0.7)",
+                        }
+                      : signalState === "AGING"
+                        ? {
+                            opacity: 0.88,
+                            borderColor: "rgba(246,196,83,0.42)",
+                            background: "rgba(246,196,83,0.025)",
+
+                            // 👇 ADD THIS
+                            borderLeft: "3px solid rgba(246,196,83,0.6)",
+                          }
+                        : {
+                            opacity: 0.72,
+                            borderColor: "rgba(120,120,120,0.28)",
+                            background: "rgba(120,120,120,0.02)",
+                            filter: "grayscale(0.18)",
+
+                            // 👇 ADD THIS
+                            borderLeft: "3px solid rgba(120,120,120,0.3)",
+                          };
                   const recentMinutes = wave.events?.[0]?.timestampUtc
                     ? Math.floor(
                         (Date.now() -
@@ -2858,16 +2996,36 @@ export default function AppPreBeta() {
                       }}
                       style={{
                         ...styles.waveCard,
+                        ...signalStateStyle,
+
+                        width: "100%",
+                        minWidth: 0,
+                        overflow: "hidden",
+
+                        // 👇 ADD HERE
+                        padding: "10px 12px",
+                        gap: 6,
+
+                        borderLeft:
+                          tone === "long"
+                            ? "3px solid #4ade80"
+                            : tone === "short"
+                              ? "3px solid #fb7185"
+                              : "3px solid #f6c453",
+
                         transition:
                           "transform 0.15s ease, box-shadow 0.15s ease",
 
-                        borderColor: isTopTickerWave
-                          ? tone === "long"
-                            ? "rgba(74,222,128,0.55)"
-                            : tone === "short"
-                              ? "rgba(251,113,133,0.55)"
-                              : getToneBorder(tone)
-                          : getToneBorder(tone),
+                        borderColor:
+                          signalState !== "LIVE"
+                            ? signalStateStyle.borderColor
+                            : isTopTickerWave
+                              ? tone === "long"
+                                ? "rgba(74,222,128,0.55)"
+                                : tone === "short"
+                                  ? "rgba(251,113,133,0.55)"
+                                  : getToneBorder(tone)
+                              : signalStateStyle.borderColor,
 
                         boxShadow: isTopTickerWave
                           ? tone === "long"
@@ -2900,20 +3058,66 @@ export default function AppPreBeta() {
                             justifyContent: "space-between",
                             alignItems: "center",
                             gap: 10,
+                            minWidth: 0,
                           }}
                         >
                           <div
                             style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 6,
+                              minWidth: 0,
+                              flex: 1,
                               fontWeight: 900,
                               fontSize: 15,
                               lineHeight: 1.1,
                             }}
                           >
-                            {wave.pair}
+                            <span
+                              style={{
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                minWidth: 0,
+                                maxWidth: 120,
+                              }}
+                            >
+                              {wave.pair}
+                            </span>
+
+                            <span
+                              style={{
+                                flexShrink: 0,
+                                fontSize: 10,
+                                fontWeight: 900,
+                                letterSpacing: 0.5,
+                                padding: "2px 6px",
+                                borderRadius: 6,
+                                background:
+                                  tone === "long"
+                                    ? "rgba(74,222,128,0.12)"
+                                    : tone === "short"
+                                      ? "rgba(251,113,133,0.12)"
+                                      : "rgba(246,196,83,0.12)",
+                                color:
+                                  tone === "long"
+                                    ? "#4ade80"
+                                    : tone === "short"
+                                      ? "#fb7185"
+                                      : "#f6c453",
+                              }}
+                            >
+                              {wave.directionBias?.toUpperCase() || "—"}
+                            </span>
                           </div>
 
                           <button
-                            style={styles.button}
+                            style={{
+                              ...styles.button,
+                              flexShrink: 0,
+                              padding: "7px 10px",
+                              fontSize: 12,
+                            }}
                             onClick={(e) => {
                               e.stopPropagation();
                               setExpandedWaves((prev) => ({
@@ -2968,6 +3172,26 @@ export default function AppPreBeta() {
                               <span style={{ opacity: 0.45 }}>•</span>
                               <span>
                                 {minutesAgo(wave.events[0].timestampUtc)}
+                              </span>
+
+                              <span style={{ opacity: 0.45 }}>•</span>
+
+                              <span
+                                style={{
+                                  color:
+                                    signalState === "LIVE"
+                                      ? "rgba(74,222,128,0.95)"
+                                      : "rgba(246,196,83,0.85)",
+                                  fontWeight: 900,
+                                  animation:
+                                    signalState === "LIVE"
+                                      ? "pulseLive 1.2s ease-in-out infinite"
+                                      : "none",
+                                }}
+                              >
+                                {signalState === "LIVE"
+                                  ? `LIVE ${getSignalCountdown(wave.events?.[0]?.timestampUtc)}`
+                                  : "AGING"}
                               </span>
                             </>
                           )}
