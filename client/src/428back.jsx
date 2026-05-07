@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
-import { createChart, CandlestickSeries, LineSeries } from "lightweight-charts";
 
 const cardButtonReset = {
   appearance: "none",
@@ -786,30 +785,11 @@ function SmartTicker({ items, onSelect }) {
 function ChartLevelOverlay({ event }) {
   if (!event) return null;
 
-  const isLong =
-    event.directionBias === "Long" || event.direction === "bullish";
-
   const levels = [
-    {
-      label: "TP2",
-      value: Number(event.tp2),
-      tone: isLong ? "long" : "short",
-    },
-    {
-      label: "TP1",
-      value: Number(event.tp1),
-      tone: isLong ? "long" : "short",
-    },
-    {
-      label: "ENTRY",
-      value: Number(event.entry),
-      tone: "gold",
-    },
-    {
-      label: "STOP",
-      value: Number(event.stop),
-      tone: isLong ? "short" : "long", // 🔥 inverted
-    },
+    { label: "TP2", value: Number(event.tp2), tone: "long" },
+    { label: "TP1", value: Number(event.tp1), tone: "long" },
+    { label: "ENTRY", value: Number(event.entry), tone: "gold" },
+    { label: "STOP", value: Number(event.stop), tone: "short" },
   ].filter((x) => Number.isFinite(x.value));
 
   if (levels.length < 2) return null;
@@ -818,8 +798,8 @@ function ChartLevelOverlay({ event }) {
   const rawHigh = Math.max(...values);
   const rawLow = Math.min(...values);
   const padding = (rawHigh - rawLow) * 0.25 || 0.01;
-  const high = event.chartHigh ?? rawHigh + padding;
-  const low = event.chartLow ?? rawLow - padding;
+  const high = rawHigh + padding;
+  const low = rawLow - padding;
   const range = high - low || 1;
 
   const entry = levels.find((x) => x.label === "ENTRY");
@@ -1145,7 +1125,11 @@ const styles = {
   app: {
     minHeight: "100vh",
     color: palette.text,
-    background: `radial-gradient(circle at 15% 20%, rgba(239,68,68,0.12), transparent 40%), radial-gradient(circle at 85% 15%, rgba(239,68,68,0.08), transparent 35%), linear-gradient(180deg, ${palette.bg2} 0%, ${palette.bg} 60%, #020409 100%)`,
+    background: `
+  radial-gradient(circle at 15% 20%, rgba(239,68,68,0.08), transparent 35%),
+  radial-gradient(circle at 85% 15%, rgba(239,68,68,0.05), transparent 30%),
+  linear-gradient(180deg, ${palette.bg2} 0%, ${palette.bg} 60%, #020409 100%)
+`,
     fontFamily:
       'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
   },
@@ -1185,10 +1169,11 @@ const styles = {
     color: palette.textSoft,
   },
   shell: {
-    width: "100%",
-    maxWidth: "100%",
-    margin: 0,
+    maxWidth: 1700,
+    margin: "0 auto",
     padding: 16,
+    display: "grid",
+    gap: 12,
   },
   button: {
     border: `1px solid ${palette.border}`,
@@ -1199,15 +1184,6 @@ const styles = {
     background:
       "linear-gradient(180deg, rgba(20,27,42,0.96), rgba(12,17,28,0.96))",
     color: palette.text,
-  },
-  smallButton: {
-    padding: "4px 8px",
-    fontSize: 11,
-    borderRadius: 8,
-    background: "rgba(255,255,255,0.04)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    color: "#cbd5f5",
-    textDecoration: "none",
   },
   primaryButton: {
     border: "none",
@@ -1258,26 +1234,20 @@ const styles = {
   },
   mainGrid: {
     display: "grid",
-    gridTemplateColumns: "260px 1fr 300px",
+    gridTemplateColumns: "280px minmax(0, 1fr) 320px",
     gap: 12,
-    width: "100%",
     alignItems: "stretch",
-    height: "clamp(580px, 70vh, 760px)",
+    minWidth: 0,
   },
   panel: {
-    borderRadius: 20,
+    borderRadius: 22,
     border: `1px solid ${palette.border}`,
-    background: `
-    radial-gradient(circle at 10% 0%, rgba(239,68,68,0.06), transparent 30%),
-    linear-gradient(180deg, rgba(14,20,32,0.96), rgba(9,13,23,0.96))
-  `,
-    boxShadow: `
-    0 0 0 1px rgba(255,255,255,0.04),
-    0 14px 32px rgba(0,0,0,0.35)
-  `,
-    padding: 14,
-    display: "grid",
+    background:
+      "linear-gradient(180deg, rgba(10,14,22,0.98), rgba(6,10,16,0.98))",
+    boxShadow: "0 10px 24px rgba(0,0,0,0.4)",
+    overflow: "hidden",
     minWidth: 0,
+    height: "100%",
   },
   panelHeader: {
     display: "flex",
@@ -1299,41 +1269,27 @@ const styles = {
   radarList: {
     display: "grid",
     gap: 12,
-    flex: 1,
-    overflow: "auto",
+    overflowY: "auto",
+    overflowX: "visible",
     alignContent: "start",
     alignItems: "start",
     minHeight: 0,
     paddingRight: 6,
     paddingBottom: 14,
   },
-
-  // 👇 ADD THESE RIGHT HERE
-  exchangeBar: {
-    display: "flex",
-    alignItems: "center",
-    gap: 6,
-    flexWrap: "wrap",
-    padding: "2px 6px",
-    marginTop: 10,
-    marginBottom: -4,
-    borderTop: "1px solid rgba(255,255,255,0.03)",
-    borderBottom: "1px solid rgba(255,255,255,0.03)",
-  },
-
-  exchangeLabel: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.52)",
-    fontWeight: 800,
-    letterSpacing: 0.4,
-  },
   waveCard: {
-    borderRadius: 16,
-    padding: "10px 12px",
-    background: "rgba(10,14,22,0.9)",
-    border: "1px solid rgba(255,255,255,0.06)",
-    transition: "all 0.15s ease",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+    borderRadius: 20,
+    border: `1px solid ${palette.border}`,
+    background:
+      "linear-gradient(180deg, rgba(14,20,32,0.98), rgba(9,13,23,0.98))",
+    overflow: "visible",
+    display: "grid",
+    alignContent: "start",
+    minHeight: 109,
+    position: "relative",
+    isolation: "isolate",
+    zIndex: 1,
+    boxShadow: "0 10px 24px rgba(0,0,0,0.22)",
   },
   expandedList: {
     display: "grid",
@@ -1345,17 +1301,18 @@ const styles = {
     position: "relative",
     zIndex: 6,
   },
-  exchangeLabel: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.52)",
-    fontWeight: 800,
-    letterSpacing: 0.4,
-  },
   chartFrame: {
-    borderRadius: 18,
-    border: `1px solid ${palette.border}`,
+    position: "relative",
+    width: "100%",
+    height: "100%",
+    minHeight: 0,
+    borderRadius: 20,
     overflow: "hidden",
-    minHeight: 320,
+    border: `1px solid ${palette.border}`,
+    background: palette.panel,
+    boxShadow: "0 14px 34px rgba(0,0,0,0.35)",
+    display: "flex",
+    padding: 4,
   },
   journalShell: {
     borderRadius: 22,
@@ -1408,7 +1365,6 @@ const styles = {
     border: `1px solid ${palette.border}`,
     background: palette.panel,
     overflow: "hidden",
-    maxHeight: 170,
   },
   aiHeader: {
     display: "flex",
@@ -1528,6 +1484,7 @@ function apiFetch(path, options = {}, token = "") {
     },
   );
 }
+
 function SessionClockWidget() {
   const [now, setNow] = useState(Date.now());
 
@@ -1798,112 +1755,6 @@ function SignalInsightBar({ event, rr, risk }) {
       <InsightBox label="SESSION" value={event.session || "—"} />
     </div>
   );
-}
-
-function LightweightExecutionChart({ event }) {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!ref.current || !event?.chartCandles?.length) return;
-
-    ref.current.innerHTML = "";
-
-    const chart = createChart(ref.current, {
-      layout: {
-        background: { color: "#070a0f" },
-        textColor: "#cbd5e1",
-      },
-      grid: {
-        vertLines: { color: "rgba(255,255,255,0.05)" },
-        horzLines: { color: "rgba(255,255,255,0.05)" },
-      },
-      rightPriceScale: {
-        borderColor: "rgba(255,255,255,0.08)",
-      },
-      timeScale: {
-        borderColor: "rgba(255,255,255,0.08)",
-        timeVisible: true,
-      },
-      width: ref.current.clientWidth,
-      height: ref.current.clientHeight,
-    });
-
-    const candles = chart.addSeries(CandlestickSeries, {
-      upColor: "#22c55e",
-      downColor: "#ef4444",
-      borderUpColor: "#22c55e",
-      borderDownColor: "#ef4444",
-      wickUpColor: "#22c55e",
-      wickDownColor: "#ef4444",
-    });
-
-    candles.setData(event.chartCandles);
-
-    const makeLevelLine = (color) =>
-      chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-      });
-
-    const firstTime = event.chartCandles[0].time;
-    const lastTime = event.chartCandles[event.chartCandles.length - 1].time;
-
-    function setLevelLine(value, color) {
-      if (!Number.isFinite(Number(value))) return;
-
-      const line = makeLevelLine(color);
-      line.setData([
-        { time: firstTime, value: Number(value) },
-        { time: lastTime, value: Number(value) },
-      ]);
-    }
-
-    setLevelLine(event.entry, "#fbbf24");
-    setLevelLine(event.stop, "#ef4444");
-    setLevelLine(event.tp1, "#22c55e");
-    setLevelLine(event.tp2, "#16a34a");
-
-    const lines = [
-      ["ENTRY", event.entry, "#f6c453"],
-      ["STOP", event.stop, "#fb7185"],
-      ["TP1", event.tp1, "#4ade80"],
-      ["TP2", event.tp2, "#4ade80"],
-    ];
-
-    lines.forEach(([title, value, color]) => {
-      if (Number.isFinite(Number(value))) {
-        candles.createPriceLine({
-          price: Number(value),
-          color,
-          lineWidth: title === "ENTRY" ? 2 : 1,
-          lineStyle: 2,
-          axisLabelVisible: true,
-          title,
-        });
-      }
-    });
-
-    chart.timeScale().fitContent();
-
-    const resize = () => {
-      chart.applyOptions({
-        width: ref.current.clientWidth,
-        height: ref.current.clientHeight,
-      });
-    };
-
-    window.addEventListener("resize", resize);
-
-    return () => {
-      window.removeEventListener("resize", resize);
-      chart.remove();
-    };
-  }, [event]);
-
-  return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
 }
 
 export default function AppPreBeta() {
@@ -2199,17 +2050,6 @@ export default function AppPreBeta() {
   const chartSymbol = getTradingViewSymbol(chartPair);
   const chartInterval = getTradingViewInterval(activeTimeframe);
 
-  const basePair = chartPair.replace(":USDT", "").replace("/", "");
-  const dashPair = chartPair.replace(":USDT", "").replace("/", "-");
-
-  const exchangeLinks = {
-    blofin: `https://blofin.com/futures/${dashPair}`,
-    binance: `https://www.binance.com/en/futures/${basePair}`,
-    bybit: `https://www.bybit.com/trade/usdt/${basePair}`,
-    okx: `https://www.okx.com/trade-swap/${dashPair.toLowerCase()}-swap`,
-    tradingView: `https://www.tradingview.com/chart/?symbol=BINANCE:${basePair}`,
-  };
-
   const chartSrc =
     `https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart` +
     `&symbol=${encodeURIComponent(chartSymbol)}` +
@@ -2223,8 +2063,7 @@ export default function AppPreBeta() {
     `&style=1` +
     `&timezone=America%2FNew_York` +
     `&withdateranges=1` +
-    `&hideideas=1` +
-    `&range=30`;
+    `&hideideas=1`;
 
   const waves = useMemo(() => groupWaves(events), [events]);
 
@@ -2282,7 +2121,7 @@ export default function AppPreBeta() {
       }
     });
 
-    return Array.from(byPair.values()).slice(0, 10);
+    return Array.from(byPair.values()).slice(0, 8);
   }, [activeWaves]);
 
   const tickerItems = useMemo(() => bestTickerItems(waves, 10), [waves]);
@@ -3126,222 +2965,290 @@ export default function AppPreBeta() {
 
         <SessionClockWidget />
 
-        <>
-          <div style={styles.mainGrid}>
-            {/* ================= LEFT: RADAR ================= */}
+        <div style={styles.mainGrid}>
+          <div
+            style={{
+              ...styles.panel,
+              minHeight: 620,
+              height: "100%",
+              display: "grid",
+              gridTemplateRows: "auto minmax(0, 1fr)",
+              minHeight: 0,
+            }}
+          >
+            <div style={styles.panelHeader}>
+              <div>
+                <div style={{ fontWeight: 900 }}>Radar Feed</div>
+                <div style={styles.subtext}>
+                  Grouped by wave, most recent first.
+                </div>
+              </div>
+              <Pill>{visibleWaves.length} active</Pill>
+            </div>
+
             <div
               style={{
-                ...styles.panel,
-                height: 500,
-                minHeight: 0,
-                overflow: "hidden",
-                display: "flex",
-                flexDirection: "column",
+                ...styles.panelBody,
+                ...styles.radarList,
                 minWidth: 0,
-                alignItems: "stretch",
+                overflowX: "hidden",
+                height: "100%",
+                maxHeight: "none",
               }}
             >
-              <div style={styles.panelHeader}>
-                <div>
-                  <div style={{ fontWeight: 900 }}>Radar Feed</div>
-                  <div style={styles.subtext}>
-                    Grouped by wave, most recent first.
-                  </div>
-                </div>
-                <Pill>{visibleWaves.length} active</Pill>
-              </div>
+              {visibleWaves.length > 0 ? (
+                visibleWaves.map((wave) => {
+                  const tone = directionTone(wave.directionBias);
+                  const isExpanded = Boolean(expandedWaves[wave.key]);
 
-              <div
-                style={{
-                  ...styles.panelBody,
-                  ...styles.radarList,
-                  flex: 1,
-                  gap: 8,
-                  minHeight: 0,
-                  overflowY: "auto",
-                  overflowX: "hidden",
-                }}
-              >
-                {visibleWaves.length > 0 ? (
-                  visibleWaves.map((wave) => {
-                    const tone = directionTone(wave.directionBias);
-                    const isExpanded = Boolean(expandedWaves[wave.key]);
+                  const signalState =
+                    wave.state ||
+                    getSignalState(wave.events?.[0]?.timestampUtc);
 
-                    return (
-                      <div
-                        key={wave.key}
-                        style={{
-                          ...styles.waveCard,
-                          minHeight: 72,
-                          padding: "10px 12px 12px",
+                  const activeEvent = wave.events?.[0];
 
+                  const currentPrice =
+                    activeEvent?.currentPrice ||
+                    activeEvent?.price ||
+                    activeEvent?.lastPrice ||
+                    activeEvent?.entry;
+
+                  const entry = Number(activeEvent?.entry || 0);
+                  const high = Number(activeEvent?.high || currentPrice);
+                  const low = Number(activeEvent?.low || currentPrice);
+
+                  let entryStatus = "WAITING";
+
+                  if (signalState !== "LIVE") {
+                    entryStatus = "MONITOR";
+                  } else if (wave.directionBias === "Long") {
+                    if (low <= entry) entryStatus = "ENTRY HIT";
+                  } else if (wave.directionBias === "Short") {
+                    if (high >= entry) entryStatus = "ENTRY HIT";
+                  }
+
+                  const entryPrice = Number(wave.events?.[0]?.entry || 0);
+
+                  const distanceFromEntryPct =
+                    currentPrice && entryPrice
+                      ? Math.abs((currentPrice - entryPrice) / entryPrice) * 100
+                      : 0;
+
+                  const entryDistanceThreshold =
+                    wave.timeframe === "1m" ? 0.25 : 0.5;
+
+                  const tradeState =
+                    signalState !== "LIVE"
+                      ? "MONITOR"
+                      : distanceFromEntryPct <= entryDistanceThreshold
+                        ? "ACTIONABLE"
+                        : "MISSED";
+
+                  const signalStateStyle =
+                    signalState === "LIVE"
+                      ? {
+                          opacity: 1,
+                          borderColor:
+                            tone === "long"
+                              ? "rgba(74,222,128,0.45)"
+                              : tone === "short"
+                                ? "rgba(251,113,133,0.48)"
+                                : "rgba(246,196,83,0.45)",
+                          background:
+                            tone === "long"
+                              ? "rgba(74,222,128,0.02)" // 👈 toned down
+                              : tone === "short"
+                                ? "rgba(251,113,133,0.025)"
+                                : "rgba(246,196,83,0.02)",
+
+                          // 👇 ADD THIS
                           borderLeft:
                             tone === "long"
-                              ? "3px solid #4ade80"
+                              ? "3px solid rgba(74,222,128,0.7)"
                               : tone === "short"
-                                ? "3px solid #fb7185"
-                                : "3px solid #f6c453",
-                          boxShadow:
-                            tone === "long"
-                              ? "0 0 0 1px rgba(74,222,128,0.35), 0 0 18px rgba(74,222,128,0.18)"
-                              : tone === "short"
-                                ? "0 0 0 1px rgba(251,113,133,0.35), 0 0 18px rgba(251,113,133,0.18)"
-                                : "0 0 0 1px rgba(246,196,83,0.35), 0 0 18px rgba(246,196,83,0.18)",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = "translateY(-2px)";
+                                ? "3px solid rgba(251,113,133,0.7)"
+                                : "3px solid rgba(246,196,83,0.7)",
+                        }
+                      : signalState === "AGING"
+                        ? {
+                            opacity: 0.88,
+                            borderColor: "rgba(246,196,83,0.42)",
+                            background: "rgba(246,196,83,0.025)",
+
+                            // 👇 ADD THIS
+                            borderLeft: "3px solid rgba(246,196,83,0.6)",
+                          }
+                        : {
+                            opacity: 0.72,
+                            borderColor: "rgba(120,120,120,0.28)",
+                            background: "rgba(120,120,120,0.02)",
+                            filter: "grayscale(0.18)",
+
+                            // 👇 ADD THIS
+                            borderLeft: "3px solid rgba(120,120,120,0.3)",
+                          };
+                  const recentMinutes = wave.events?.[0]?.timestampUtc
+                    ? Math.floor(
+                        (Date.now() -
+                          parseEventDate(
+                            wave.events[0].timestampUtc,
+                          ).getTime()) /
+                          60000,
+                      )
+                    : 999;
+
+                  const isHotWave =
+                    (wave.events?.length || 0) >= 3 || recentMinutes <= 3;
+
+                  const isTopTickerWave =
+                    topTickerWaveKey && wave.key === topTickerWaveKey;
+
+                  return (
+                    <div
+                      key={wave.key}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = isHotWave
+                          ? "translateY(-4px) scale(1.015)"
+                          : "translateY(-3px) scale(1.01)";
+                        e.currentTarget.style.zIndex = 8;
+
+                        if (isHotWave) {
                           e.currentTarget.style.boxShadow =
                             tone === "long"
-                              ? "0 0 0 1px rgba(74,222,128,0.45), 0 18px 40px rgba(0,0,0,0.45)"
+                              ? "0 0 0 1px rgba(74,222,128,0.45), 0 22px 50px rgba(74,222,128,0.28)"
                               : tone === "short"
-                                ? "0 0 0 1px rgba(251,113,133,0.45), 0 18px 40px rgba(0,0,0,0.45)"
-                                : "0 0 0 1px rgba(246,196,83,0.45), 0 18px 40px rgba(0,0,0,0.45)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = "translateY(0px)";
-                          e.currentTarget.style.boxShadow =
-                            tone === "long"
-                              ? "0 0 0 1px rgba(74,222,128,0.25), 0 10px 24px rgba(0,0,0,0.35)"
+                                ? "0 0 0 1px rgba(251,113,133,0.45), 0 22px 50px rgba(251,113,133,0.28)"
+                                : "0 18px 42px rgba(0,0,0,0.34)";
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform =
+                          "translateY(0) scale(1)";
+                        e.currentTarget.style.zIndex = 1;
+                        e.currentTarget.style.boxShadow = "";
+                      }}
+                      style={{
+                        ...styles.waveCard,
+                        ...signalStateStyle,
+
+                        width: "100%",
+                        minWidth: 0,
+                        overflow: "hidden",
+
+                        // 👇 ADD HERE
+                        padding: "10px 12px",
+                        gap: 6,
+
+                        borderLeft:
+                          tone === "long"
+                            ? "3px solid #4ade80"
+                            : tone === "short"
+                              ? "3px solid #fb7185"
+                              : "3px solid #f6c453",
+
+                        transition:
+                          "transform 0.15s ease, box-shadow 0.15s ease",
+
+                        borderColor:
+                          signalState !== "LIVE"
+                            ? signalStateStyle.borderColor
+                            : isTopTickerWave
+                              ? tone === "long"
+                                ? "rgba(74,222,128,0.55)"
+                                : tone === "short"
+                                  ? "rgba(251,113,133,0.55)"
+                                  : getToneBorder(tone)
+                              : signalStateStyle.borderColor,
+
+                        boxShadow: isTopTickerWave
+                          ? tone === "long"
+                            ? "0 0 0 1px rgba(74,222,128,0.45), 0 18px 44px rgba(74,222,128,0.22)"
+                            : tone === "short"
+                              ? "0 0 0 1px rgba(251,113,133,0.45), 0 18px 44px rgba(251,113,133,0.22)"
+                              : "0 14px 30px rgba(0,0,0,0.30)"
+                          : isHotWave
+                            ? tone === "long"
+                              ? "0 0 0 1px rgba(74,222,128,0.35), 0 16px 40px rgba(74,222,128,0.18)"
                               : tone === "short"
-                                ? "0 0 0 1px rgba(251,113,133,0.25), 0 10px 24px rgba(0,0,0,0.35)"
-                                : "0 0 0 1px rgba(246,196,83,0.25), 0 10px 24px rgba(0,0,0,0.35)";
+                                ? "0 0 0 1px rgba(251,113,133,0.35), 0 16px 40px rgba(251,113,133,0.18)"
+                                : "0 12px 28px rgba(0,0,0,0.28)"
+                            : "0 10px 24px rgba(0,0,0,0.22)",
+                      }}
+                    >
+                      {/* HEADER */}
+                      <div
+                        onClick={() => selectWaveHead(wave)}
+                        style={{
+                          display: "grid",
+                          gap: 6,
+                          padding: "10px 12px",
+                          cursor: "pointer",
                         }}
                       >
-                        {/* HEADER */}
                         <div
-                          onClick={() => selectWaveHead(wave)}
                           style={{
-                            display: "grid",
-                            gridTemplateColumns: "1fr auto",
-                            gap: 6,
-                            padding: "8px 10px",
-                            cursor: "pointer",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: 10,
+                            minWidth: 0,
                           }}
                         >
-                          {/* LEFT SIDE */}
                           <div
                             style={{
                               display: "flex",
-                              flexDirection: "column",
-                              gap: 4, // 👈 slightly more breathing room
+                              alignItems: "center",
+                              gap: 6,
+                              minWidth: 0,
+                              flex: 1,
+                              fontWeight: 900,
+                              fontSize: 15,
+                              lineHeight: 1.1,
                             }}
                           >
-                            {/* ROW 1 */}
-                            <div
+                            <span
                               style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 6,
-                              }}
-                            >
-                              <div
-                                style={{
-                                  fontWeight: 900,
-                                  fontSize: 14,
-                                  letterSpacing: 0.4,
-                                  color:
-                                    tone === "long"
-                                      ? "#4ade80"
-                                      : tone === "short"
-                                        ? "#fb7185"
-                                        : "#f6c453",
-                                }}
-                              >
-                                {wave.pair}
-                              </div>
-
-                              <span
-                                style={{
-                                  fontSize: 9,
-                                  fontWeight: 900,
-                                  padding: "2px 6px",
-                                  borderRadius: 999,
-                                  opacity: 0.7,
-                                  background:
-                                    tone === "long"
-                                      ? "rgba(74,222,128,0.12)"
-                                      : "rgba(251,113,133,0.12)",
-                                  color:
-                                    tone === "long" ? "#4ade80" : "#fb7185",
-                                }}
-                              >
-                                {wave.directionBias}
-                              </span>
-                            </div>
-
-                            {/* ROW 2 */}
-                            <div
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 800,
-                                color: palette.textSoft,
-                                whiteSpace: "nowrap",
                                 overflow: "hidden",
                                 textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                minWidth: 0,
+                                maxWidth: 120,
                               }}
                             >
-                              {wave.timeframe || "1m"} •{" "}
-                              {wave.events?.[0]?.eventType || "SWEEP"}
-                            </div>
-
-                            {/* ROW 3 */}
-                            <div
+                              {wave.pair}
+                            </span>
+                            <span
                               style={{
-                                fontSize: 9,
-                                fontWeight: 800,
-                                color: palette.textSoft,
-                                opacity: 0.72,
+                                flexShrink: 0,
+                                fontSize: 10,
+                                fontWeight: 900,
+                                letterSpacing: 0.5,
+                                padding: "2px 6px",
+                                borderRadius: 6,
+                                background:
+                                  tone === "long"
+                                    ? "rgba(74,222,128,0.12)"
+                                    : tone === "short"
+                                      ? "rgba(251,113,133,0.12)"
+                                      : "rgba(246,196,83,0.12)",
+                                color:
+                                  tone === "long"
+                                    ? "#4ade80"
+                                    : tone === "short"
+                                      ? "#fb7185"
+                                      : "#f6c453",
                               }}
                             >
-                              {wave.events?.length || 1}x •{" "}
-                              {minutesAgo(wave.events?.[0]?.timestampUtc)}
-                            </div>
-
-                            {/* CONFIDENCE BAR */}
-                            <div
-                              style={{
-                                height: 5,
-                                borderRadius: 999,
-                                background: "rgba(255,255,255,0.16)",
-                                overflow: "hidden",
-                                marginTop: 5,
-                                width: "100%",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  width: `${Math.max(
-                                    8,
-                                    Math.round(
-                                      (wave.events?.[0]?.botConfidence || 0) *
-                                        100,
-                                    ),
-                                  )}%`,
-                                  height: "100%",
-                                  borderRadius: 999,
-                                  background:
-                                    tone === "long"
-                                      ? "linear-gradient(90deg, #16a34a, #86efac)"
-                                      : tone === "short"
-                                        ? "linear-gradient(90deg, #dc2626, #fb7185)"
-                                        : "linear-gradient(90deg, #d97706, #fde68a)",
-                                  boxShadow:
-                                    tone === "long"
-                                      ? "0 0 10px rgba(74,222,128,0.75)"
-                                      : tone === "short"
-                                        ? "0 0 10px rgba(251,113,133,0.75)"
-                                        : "0 0 10px rgba(246,196,83,0.75)",
-                                }}
-                              />
-                            </div>
+                              {wave.directionBias?.toUpperCase() || "—"}
+                            </span>
                           </div>
 
-                          {/* RIGHT SIDE */}
                           <button
                             style={{
                               ...styles.button,
-                              fontSize: 11,
-                              padding: "4px 8px",
+                              flexShrink: 0,
+                              padding: "7px 10px",
+                              fontSize: 12,
                             }}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -3351,18 +3258,105 @@ export default function AppPreBeta() {
                               }));
                             }}
                           >
-                            {isExpanded ? "−" : "+"}
+                            {isExpanded ? "Hide" : "Show"}
                           </button>
                         </div>
 
-                        {/* EXPANDED */}
-                        {isExpanded && (
-                          <div
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                            fontSize: 12,
+                            color: palette.textSoft,
+                            fontWeight: 600,
+                          }}
+                        >
+                          <span>{wave.timeframe}</span>
+
+                          <span style={{ opacity: 0.45 }}>•</span>
+
+                          <span
                             style={{
-                              padding: 12,
-                              borderTop: `1px solid ${palette.borderSoft}`,
+                              fontWeight: 900,
+                              color:
+                                entryStatus === "ENTRY HIT"
+                                  ? "#4ade80"
+                                  : entryStatus === "WAITING"
+                                    ? "#facc15"
+                                    : "#9ca3af",
                             }}
                           >
+                            {entryStatus}
+                          </span>
+
+                          {wave.events?.length > 1 && (
+                            <>
+                              <span style={{ opacity: 0.45 }}>•</span>
+                              <span
+                                style={{
+                                  padding: "2px 6px",
+                                  borderRadius: 999,
+                                  background:
+                                    wave.events.length >= 5
+                                      ? "rgba(246,196,83,0.16)"
+                                      : "rgba(255,255,255,0.06)",
+                                  color:
+                                    wave.events.length >= 5
+                                      ? palette.gold
+                                      : palette.textSoft,
+                                  fontWeight: 800,
+                                  fontSize: 11,
+                                }}
+                              >
+                                {wave.events.length}x
+                              </span>
+                            </>
+                          )}
+
+                          {wave.events?.[0]?.timestampUtc && (
+                            <>
+                              <span style={{ opacity: 0.45 }}>•</span>
+                              <span>
+                                {minutesAgo(wave.events[0].timestampUtc)}
+                              </span>
+
+                              <span style={{ opacity: 0.45 }}>•</span>
+
+                              <span
+                                style={{
+                                  color:
+                                    signalState === "LIVE"
+                                      ? "rgba(74,222,128,0.95)"
+                                      : "rgba(246,196,83,0.85)",
+                                  fontWeight: 900,
+                                  animation:
+                                    signalState === "LIVE"
+                                      ? "pulseLive 1.2s ease-in-out infinite"
+                                      : "none",
+                                }}
+                              >
+                                {signalState === "LIVE"
+                                  ? `LIVE ${getSignalCountdown(wave.events?.[0]?.timestampUtc)}`
+                                  : "AGING"}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* EXPANDED */}
+                      {isExpanded && (
+                        <div
+                          style={{
+                            padding: "12px 14px",
+                            borderTop: `1px solid ${palette.borderSoft}`,
+                            display: "grid",
+                            gap: 10,
+                          }}
+                        >
+                          <div style={styles.rightPanelGroup}>
                             <div style={styles.topCardRow}>
                               <MiniBox
                                 label="Entry"
@@ -3376,281 +3370,300 @@ export default function AppPreBeta() {
                                 label="TP2"
                                 value={num(wave.events[0]?.tp2)}
                               />
+                              <MiniBox
+                                label="Time"
+                                value={formatTimeOnly(
+                                  wave.events[0]?.timestampUtc,
+                                )}
+                              />
                             </div>
                           </div>
-                        )}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <div style={{ color: palette.textSoft }}>
-                    No live events yet.
-                  </div>
-                )}
-              </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div style={{ color: palette.textSoft, fontSize: 13 }}>
+                  No live events yet. Trigger /test-sweep or wait for the
+                  scanner.
+                </div>
+              )}
             </div>
+          </div>
 
-            {/* ================= CENTER ================= */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateRows: "minmax(420px, 1fr) auto auto auto",
+              gap: 8,
+              minWidth: 0,
+              alignContent: "start",
+            }}
+          >
             <div
               style={{
-                display: "flex",
-                flexDirection: "column",
+                ...styles.chartFrame,
+                marginBottom: 0,
                 minHeight: 0,
-                gap: 10,
-                alignSelf: "start", // 🔥 KEY
-              }}
-            >
-              {/* CHART */}
-              {/* CHART */}
-              <div
-                style={{
-                  ...styles.chartFrame,
-                  height: 460,
-                  minHeight: 460,
-                  flexShrink: 0,
-                }}
-              >
-                {selectedEvent?.chartCandles?.length ? (
-                  <LightweightExecutionChart event={selectedEvent} />
-                ) : (
-                  <iframe
-                    key={`${chartSymbol}_${chartInterval}_${chartReloadKey}`}
-                    src={chartSrc}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      border: "none",
-                    }}
-                  />
-                )}
-              </div>
-
-              {/* EXCHANGE BAR (ONLY ONE NOW) */}
-              <div style={styles.exchangeBar}>
-                <span style={styles.exchangeLabel}>Open on:</span>
-
-                <a
-                  href={exchangeLinks.blofin}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.smallButton}
-                >
-                  BLOFIN
-                </a>
-                <a
-                  href={exchangeLinks.binance}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.smallButton}
-                >
-                  BINANCE
-                </a>
-                <a
-                  href={exchangeLinks.bybit}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.smallButton}
-                >
-                  BYBIT
-                </a>
-                <a
-                  href={exchangeLinks.okx}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.smallButton}
-                >
-                  OKX
-                </a>
-                <a
-                  href={exchangeLinks.tradingView}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.smallButton}
-                >
-                  TV
-                </a>
-              </div>
-
-              {/* SIGNAL + AI */}
-              <SignalInsightBar
-                event={selectedEvent}
-                rr={selectedEventRR}
-                risk={decisionRiskAmount}
-              />
-            </div>
-
-            {/* ================= RIGHT ================= */}
-            <div
-              style={{
-                ...styles.panel,
                 height: "100%",
-                display: "flex",
-                flexDirection: "column",
-                overflow: "hidden",
               }}
             >
-              <div
+              <iframe
+                key={`${chartSymbol}_${chartInterval}_${chartReloadKey}`}
+                src={chartSrc}
                 style={{
-                  ...styles.panel,
+                  width: "100%",
                   height: "100%",
-                  display: "flex",
-                  flexDirection: "column",
-                  overflow: "hidden",
+                  flex: 1,
+                  border: "none",
+                  display: "block",
                 }}
-              >
-                <div style={styles.panelHeader}>
-                  <div>
-                    <div style={{ fontWeight: 900 }}>Decision Context</div>
-                    <div style={styles.subtext}>
-                      Current event and prop controls.
+              />
+
+              <ChartLevelOverlay event={selectedEvent} />
+
+              {chartLoading ? (
+                <div
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    zIndex: 3,
+                    display: "grid",
+                    placeItems: "center",
+                    background:
+                      "linear-gradient(180deg, rgba(3,6,11,0.52), rgba(3,6,11,0.78))",
+                    backdropFilter: "none",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 12,
+                      justifyItems: "center",
+                      padding: 20,
+                      minWidth: 240,
+                      borderRadius: 18,
+                      background: "rgba(15,23,42,0.72)",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      boxShadow: "0 12px 30px rgba(0,0,0,0.28)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 42,
+                        height: 42,
+                        borderRadius: "50%",
+                        border: "3px solid rgba(255,255,255,0.14)",
+                        borderTopColor: "rgba(239,68,68,0.95)",
+                        animation: "spin 0.9s linear infinite",
+                      }}
+                    />
+                    <div
+                      style={{
+                        fontWeight: 800,
+                        fontSize: 15,
+                        letterSpacing: 0.2,
+                      }}
+                    >
+                      Syncing liquidity map
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "rgba(255,255,255,0.66)",
+                        textAlign: "center",
+                      }}
+                    >
+                      {selectedEvent?.pair || decisionForm.pair || "BTC/USDT"} ·{" "}
+                      {selectedEvent?.timeframe ||
+                        decisionForm.timeframe ||
+                        "1m"}
                     </div>
                   </div>
                 </div>
+              ) : null}
 
+              {chartFailed ? (
                 <div
                   style={{
-                    ...styles.panelBody,
-                    flex: 1,
-                    minHeight: 0,
-                    overflowY: "auto",
-                    paddingRight: 4,
+                    position: "absolute",
+                    inset: 0,
+                    display: "grid",
+                    placeItems: "center",
+                    background: "rgba(3,6,11,0.82)",
+                    zIndex: 4,
                   }}
                 >
-                  <div style={{ display: "grid", gap: 10 }}>
-                    <MiniBox label="Pair" value={selectedEvent?.pair || "—"} />
-                    <MiniBox
-                      label="Confidence"
-                      value={`${Math.round((selectedEvent?.botConfidence || 0) * 100)}%`}
-                      subtext={selectedEvent?.sweepType || "No sweep type"}
-                    />
-
-                    {/* CONFIDENCE BAR */}
-                    <div
-                      style={{
-                        padding: 12,
-                        borderRadius: 16,
-                        background: "rgba(15,23,42,0.72)",
-                        border: `1px solid ${palette.borderSoft}`,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: 11,
-                          color: palette.textSoft,
-                          marginBottom: 8,
-                          textTransform: "uppercase",
-                          letterSpacing: 0.8,
-                        }}
-                      >
-                        <span>Setup Strength</span>
-                        <span>
-                          {Math.round(
-                            (selectedEvent?.botConfidence || 0) * 100,
-                          )}
-                          %
-                        </span>
-                      </div>
-
-                      <div
-                        style={{
-                          height: 8,
-                          borderRadius: 999,
-                          background: "rgba(255,255,255,0.08)",
-                          overflow: "hidden",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${Math.max(4, Math.round((selectedEvent?.botConfidence || 0) * 100))}%`,
-                            height: "100%",
-                            borderRadius: 999,
-                            background:
-                              (selectedEvent?.botConfidence || 0) >= 0.7
-                                ? "linear-gradient(90deg, #22c55e, #86efac)"
-                                : (selectedEvent?.botConfidence || 0) >= 0.45
-                                  ? "linear-gradient(90deg, #f59e0b, #fde68a)"
-                                  : "linear-gradient(90deg, #fb7185, #fecdd3)",
-                            boxShadow:
-                              (selectedEvent?.botConfidence || 0) >= 0.7
-                                ? "0 0 18px rgba(34,197,94,0.35)"
-                                : (selectedEvent?.botConfidence || 0) >= 0.45
-                                  ? "0 0 18px rgba(245,158,11,0.30)"
-                                  : "0 0 18px rgba(251,113,133,0.30)",
-                          }}
-                        />
-                      </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 10,
+                      justifyItems: "center",
+                    }}
+                  >
+                    <div style={{ color: palette.textSoft }}>
+                      Chart failed to load.
                     </div>
-
-                    <MiniBox
-                      label="Daily Loss"
-                      value={money(propStatus.dailyLoss)}
-                    />
-                    <MiniBox
-                      label="State"
-                      value={selectedEvent?.tradeState || "—"}
-                    />
-
-                    <MiniBox
-                      label="Pattern"
-                      value={
-                        selectedEvent?.pattern ||
-                        selectedEvent?.sweepType ||
-                        "—"
-                      }
-                      subtext={selectedEvent?.structure || "No structure"}
-                    />
-
-                    <MiniBox
-                      label="Current Price"
-                      value={num(
-                        selectedEvent?.currentPrice || selectedEvent?.price,
-                      )}
-                      subtext={selectedEvent?.eventType || "No event"}
-                    />
-
-                    {/* SESSION NOTE */}
-                    <div
-                      style={{
-                        padding: 12,
-                        borderRadius: 16,
-                        background:
-                          "linear-gradient(180deg, rgba(15,23,42,0.9), rgba(8,12,22,0.9))",
-                        border: `1px solid ${palette.borderSoft}`,
-                        fontSize: 12,
-                        color: palette.textSoft,
-                      }}
+                    <button
+                      style={styles.primaryButton}
+                      type="button"
+                      onClick={retryChart}
                     >
-                      <div
-                        style={{
-                          fontSize: 10,
-                          textTransform: "uppercase",
-                          letterSpacing: 0.9,
-                          marginBottom: 5,
-                          color: palette.textMuted,
-                        }}
-                      >
-                        Execution Note
-                      </div>
-                      {selectedEvent?.directionBias || "Bias"} •{" "}
-                      {selectedEvent?.session || "Session"} •{" "}
-                      {selectedEvent?.emaContext || "No EMA context"}
-                    </div>
+                      Retry
+                    </button>
                   </div>
-                  <MiniBox label="Pair" value={selectedEvent?.pair || "—"} />
+                </div>
+              ) : null}
+            </div>
+
+            <div style={styles.panel}>
+              <div style={styles.panelBody}>
+                <div style={styles.topCardRow}>
                   <MiniBox
-                    label="Confidence"
-                    value={`${((selectedEvent?.botConfidence || 0) * 100).toFixed(0)}%`}
+                    label="Entry"
+                    value={num(selectedEvent?.entry)}
+                    subtext={`Stop ${num(selectedEvent?.stop)}`}
                   />
                   <MiniBox
-                    label="Daily Loss"
-                    value={money(propStatus.dailyLoss)}
+                    label="TP1"
+                    value={num(selectedEvent?.tp1)}
+                    subtext={rrText(selectedEventRR.rr1)}
                   />
                   <MiniBox
-                    label="State"
+                    label="TP2"
+                    value={num(selectedEvent?.tp2)}
+                    subtext={rrText(selectedEventRR.rr2)}
+                  />
+                  <MiniBox
+                    label="Session"
+                    value={selectedEvent?.session || "—"}
+                    subtext={formatDateTime(selectedEvent?.timestampUtc)}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <SignalInsightBar
+              event={selectedEvent}
+              rr={selectedEventRR}
+              risk={decisionRiskAmount}
+            />
+
+            <AiReviewPanel
+              entry={activeLogEntry}
+              liveReview={aiReviewResult}
+              loading={aiReviewLoading}
+              locked={false}
+            />
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gap: 10,
+              alignContent: "start",
+              minWidth: 0,
+            }}
+          >
+            <div
+              style={{
+                ...styles.panel,
+                minHeight: 620,
+                height: "100%",
+                display: "grid",
+                alignContent: "stretch",
+              }}
+            >
+              <div style={styles.panelHeader}>
+                <div>
+                  <div style={{ fontWeight: 900 }}>Decision Context</div>
+                  <div style={styles.subtext}>
+                    Current event and prop controls.
+                  </div>
+                </div>
+              </div>
+
+              <div style={styles.panelBody}>
+                <MiniBox
+                  label="Selected Pair"
+                  value={selectedEvent?.pair || "BTC/USDT"}
+                  subtext={selectedEvent?.eventType || "No event"}
+                />
+                <MiniBox
+                  label="Confidence"
+                  value={`${((Number(selectedEvent?.botConfidence) || 0) * 100).toFixed(0)}%`}
+                  subtext={selectedEvent?.sweepType || "—"}
+                />
+                <MiniBox
+                  label="Prop Daily Loss"
+                  value={money(propStatus.dailyLoss)}
+                  subtext={`Target ${money(propStatus.target)}`}
+                />
+                <MiniBox
+                  label="Top Execution"
+                  value={advancedStats.topExecution}
+                  subtext={`Avg confidence self ${advancedStats.avgConfidenceSelf.toFixed(1)}`}
+                />
+
+                <select
+                  style={fieldStyle}
+                  value={propAccount.presetId}
+                  onChange={(e) =>
+                    setPropAccount((prev) => ({
+                      ...prev,
+                      presetId: e.target.value,
+                    }))
+                  }
+                >
+                  {PROP_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  style={fieldStyle}
+                  value={propAccount.accountSize}
+                  onChange={(e) =>
+                    setPropAccount((prev) => ({
+                      ...prev,
+                      accountSize: Number(e.target.value) || 0,
+                    }))
+                  }
+                >
+                  {activePreset.accountSizes.map((size) => (
+                    <option key={size} value={size}>
+                      {size === 0 ? "Off" : `$${size.toLocaleString()}`}
+                    </option>
+                  ))}
+                </select>
+                <div style={{ display: "grid", gap: 10 }}>
+                  <MiniBox
+                    label="Signal State"
+                    value={
+                      selectedEvent
+                        ? getSignalState(selectedEvent.timestampUtc)
+                        : "WAITING"
+                    }
+                    subtext={
+                      selectedEvent
+                        ? getSignalCountdown(selectedEvent.timestampUtc)
+                        : "No active signal"
+                    }
+                  />
+
+                  <MiniBox
+                    label="Trade State"
                     value={selectedEvent?.tradeState || "—"}
+                    subtext={
+                      selectedEvent?.distanceFromEntryPct != null
+                        ? `${Number(selectedEvent.distanceFromEntryPct).toFixed(2)}% from entry`
+                        : "Distance unknown"
+                    }
                   />
+
                   <MiniBox
                     label="Pattern"
                     value={
@@ -3670,63 +3683,63 @@ export default function AppPreBeta() {
               </div>
             </div>
           </div>
+        </div>
 
-          {/* ================= JOURNAL (OUTSIDE GRID) ================= */}
-          <div
-            style={{
-              ...styles.journalShell,
-              width: "100%",
-            }}
-          >
-            <div style={styles.journalHeader}>
-              <div>
-                <div style={{ fontWeight: 900 }}>Behavior Engine Journal</div>
-                <div style={styles.subtext}>
-                  Log event-linked or manual decisions.
-                </div>
+        <div
+          style={{
+            ...styles.journalShell,
+            width: "100%",
+            marginTop: 0,
+          }}
+        >
+          <div style={styles.journalHeader}>
+            <div>
+              <div style={{ fontWeight: 900 }}>Behavior Engine Journal</div>
+              <div style={styles.subtext}>
+                Log event-linked or manual decisions with AI review.
               </div>
             </div>
-          </div>
 
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
-          >
-            <button
+            <div
               style={{
-                ...styles.button,
-                background:
-                  logMode === "event"
-                    ? "rgba(74,222,128,0.12)"
-                    : "rgba(59,130,246,0.12)",
-                border:
-                  logMode === "event"
-                    ? "1px solid rgba(74,222,128,0.35)"
-                    : "1px solid rgba(59,130,246,0.35)",
-                fontWeight: 900,
+                display: "flex",
+                gap: 8,
+                flexWrap: "wrap",
+                alignItems: "center",
               }}
-              onClick={() =>
-                setLogMode((prev) => (prev === "event" ? "manual" : "event"))
-              }
-              type="button"
             >
-              {logMode === "event" ? "EVENT MODE" : "MANUAL MODE"}
-            </button>
+              <button
+                style={{
+                  ...styles.button,
+                  background:
+                    logMode === "event"
+                      ? "rgba(74,222,128,0.12)"
+                      : "rgba(59,130,246,0.12)",
+                  border:
+                    logMode === "event"
+                      ? "1px solid rgba(74,222,128,0.35)"
+                      : "1px solid rgba(59,130,246,0.35)",
+                  fontWeight: 900,
+                }}
+                onClick={() =>
+                  setLogMode((prev) => (prev === "event" ? "manual" : "event"))
+                }
+                type="button"
+              >
+                {logMode === "event" ? "EVENT MODE" : "MANUAL MODE"}
+              </button>
 
-            <button
-              style={{
-                ...styles.button,
-                opacity: 0.7,
-              }}
-              onClick={handleExportLogs}
-              type="button"
-            >
-              Export Logs
-            </button>
+              <button
+                style={{
+                  ...styles.button,
+                  opacity: 0.7,
+                }}
+                onClick={handleExportLogs}
+                type="button"
+              >
+                Export Logs
+              </button>
+            </div>
           </div>
 
           <div style={{ padding: 12, display: "grid", gap: 12 }}>
@@ -4072,162 +4085,154 @@ export default function AppPreBeta() {
               </div>
             </div>
           </div>
+        </div>
 
-          <div style={{ ...styles.journalShell, width: "100%", marginTop: 6 }}>
-            <div style={styles.journalHeader}>
-              <div>
-                <div style={{ fontWeight: 900 }}>Recent Journal Entries</div>
-                <div style={styles.subtext}>
-                  Click a log card to load its AI review.
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <button
-                  style={styles.button}
-                  onClick={() => setShowInsights((prev) => !prev)}
-                  type="button"
-                >
-                  {showInsights ? "Show Less" : "Show More"}
-                </button>
+        <div style={{ ...styles.journalShell, width: "100%" }}>
+          <div style={styles.journalHeader}>
+            <div>
+              <div style={{ fontWeight: 900 }}>Recent Journal Entries</div>
+              <div style={styles.subtext}>
+                Click a log card to load its AI review.
               </div>
             </div>
 
-            <div
-              style={{
-                padding: 12,
-                display: "grid",
-                gap: 10,
-                maxHeight: 520,
-                overflowY: "auto",
-              }}
-            >
-              {displayDecisions.length ? (
-                displayDecisions.map((log) => {
-                  const isExpanded = expandedLogId === log.id;
-                  const tone = gradeTone(
-                    log.aiGrade || log.executionAssessment,
-                  );
-                  const direction = log.directionBias;
-                  const isLong = direction === "Long";
-                  const isShort = direction === "Short";
-                  return (
-                    <button
-                      key={log.id}
-                      type="button"
-                      onClick={() => toggleLogCard(log.id)}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                style={styles.button}
+                onClick={() => setShowInsights((prev) => !prev)}
+                type="button"
+              >
+                {showInsights ? "Show Less" : "Show More"}
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              padding: 12,
+              display: "grid",
+              gap: 10,
+              maxHeight: 520,
+              overflowY: "auto",
+            }}
+          >
+            {displayDecisions.length ? (
+              displayDecisions.map((log) => {
+                const isExpanded = expandedLogId === log.id;
+                const tone = gradeTone(log.aiGrade || log.executionAssessment);
+                const direction = log.directionBias;
+                const isLong = direction === "Long";
+                const isShort = direction === "Short";
+                return (
+                  <button
+                    key={log.id}
+                    type="button"
+                    onClick={() => toggleLogCard(log.id)}
+                    style={{
+                      ...cardButtonReset,
+                      padding: 14,
+                      borderRadius: 18,
+                      border: `1px solid ${getToneBorder(tone)}`,
+                      background: palette.card,
+                      display: "grid",
+                      gap: 10,
+                    }}
+                  >
+                    <div
                       style={{
-                        ...cardButtonReset,
-                        padding: 14,
-                        borderRadius: 18,
-                        border: `1px solid ${getToneBorder(tone)}`,
-                        background: palette.card,
-                        display: "grid",
+                        display: "flex",
+                        justifyContent: "space-between",
                         gap: 10,
+                        alignItems: "start",
+                        flexWrap: "wrap",
                       }}
                     >
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 10,
-                          alignItems: "start",
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        <div style={{ display: "grid", gap: 6 }}>
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: 8,
-                              alignItems: "center",
-                              flexWrap: "wrap",
-                            }}
-                          >
-                            <div style={{ fontWeight: 900, fontSize: 16 }}>
-                              {log.pair}
-                            </div>
-                            <Pill tone={directionTone(log.directionBias)}>
-                              {log.directionBias}
-                            </Pill>
-                            <Pill>{log.timeframe}</Pill>
-                            {log.aiGrade ? (
-                              <Pill tone={tone}>{log.aiGrade}</Pill>
-                            ) : null}
-                          </div>
-                          <div
-                            style={{ color: palette.textSoft, fontSize: 13 }}
-                          >
-                            {log.eventType} • {log.sweepType} •{" "}
-                            {formatDateTime(log.timestamp)}
-                          </div>
-                        </div>
-
+                      <div style={{ display: "grid", gap: 6 }}>
                         <div
                           style={{
-                            display: "grid",
-                            gap: 6,
-                            justifyItems: "end",
+                            display: "flex",
+                            gap: 8,
+                            alignItems: "center",
+                            flexWrap: "wrap",
                           }}
                         >
-                          <div
-                            style={{ fontSize: 12, color: palette.textSoft }}
-                          >
-                            {log.outcome || "—"}
+                          <div style={{ fontWeight: 900, fontSize: 16 }}>
+                            {log.pair}
                           </div>
-                          <div style={{ fontWeight: 800 }}>
-                            {money(log.pnl)}
-                          </div>
+                          <Pill tone={directionTone(log.directionBias)}>
+                            {log.directionBias}
+                          </Pill>
+                          <Pill>{log.timeframe}</Pill>
+                          {log.aiGrade ? (
+                            <Pill tone={tone}>{log.aiGrade}</Pill>
+                          ) : null}
+                        </div>
+                        <div style={{ color: palette.textSoft, fontSize: 13 }}>
+                          {log.eventType} • {log.sweepType} •{" "}
+                          {formatDateTime(log.timestamp)}
                         </div>
                       </div>
 
-                      {isExpanded ? (
-                        <div
-                          style={{
-                            display: "grid",
-                            gap: 8,
-                            paddingTop: 8,
-                            borderTop: `1px solid ${palette.borderSoft}`,
-                          }}
-                        >
-                          <div style={styles.topCardRow}>
-                            <MiniBox
-                              label="Entry / Stop"
-                              value={`${num(log.entry)} / ${num(log.stop)}`}
-                              subtext={`Realized ${rrText(log.realizedRR)}`}
-                            />
-                            <MiniBox
-                              label="RR Plan"
-                              value={`${rrText(log.rr1)} / ${rrText(log.rr2)}`}
-                              subtext={log.executionType || "—"}
-                            />
-                            <MiniBox
-                              label="Discipline"
-                              value={log.disciplineScore ?? "—"}
-                              subtext={log.ruleBreak || "None"}
-                            />
-                          </div>
-
-                          {log.notes ? (
-                            <div
-                              style={{ color: palette.textSoft, fontSize: 13 }}
-                            >
-                              {log.notes}
-                            </div>
-                          ) : null}
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: 6,
+                          justifyItems: "end",
+                        }}
+                      >
+                        <div style={{ fontSize: 12, color: palette.textSoft }}>
+                          {log.outcome || "—"}
                         </div>
-                      ) : null}
-                    </button>
-                  );
-                })
-              ) : (
-                <div style={{ color: palette.textSoft, fontSize: 13 }}>
-                  No journal entries yet.
-                </div>
-              )}
-            </div>
+                        <div style={{ fontWeight: 800 }}>{money(log.pnl)}</div>
+                      </div>
+                    </div>
+
+                    {isExpanded ? (
+                      <div
+                        style={{
+                          display: "grid",
+                          gap: 8,
+                          paddingTop: 8,
+                          borderTop: `1px solid ${palette.borderSoft}`,
+                        }}
+                      >
+                        <div style={styles.topCardRow}>
+                          <MiniBox
+                            label="Entry / Stop"
+                            value={`${num(log.entry)} / ${num(log.stop)}`}
+                            subtext={`Realized ${rrText(log.realizedRR)}`}
+                          />
+                          <MiniBox
+                            label="RR Plan"
+                            value={`${rrText(log.rr1)} / ${rrText(log.rr2)}`}
+                            subtext={log.executionType || "—"}
+                          />
+                          <MiniBox
+                            label="Discipline"
+                            value={log.disciplineScore ?? "—"}
+                            subtext={log.ruleBreak || "None"}
+                          />
+                        </div>
+
+                        {log.notes ? (
+                          <div
+                            style={{ color: palette.textSoft, fontSize: 13 }}
+                          >
+                            {log.notes}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </button>
+                );
+              })
+            ) : (
+              <div style={{ color: palette.textSoft, fontSize: 13 }}>
+                No journal entries yet.
+              </div>
+            )}
           </div>
-        </>
+        </div>
 
         {/* GLOBAL TOASTS */}
         <div

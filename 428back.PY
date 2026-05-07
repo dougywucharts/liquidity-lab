@@ -44,6 +44,8 @@ BRIDGE_URLS = [
 
 ENABLE_RADAR_POST = True
 BRIDGE_TIMEOUT = 8
+STARTUP_TEST_ENABLED = True
+STARTUP_TEST_PAIR = "TEST/USDT"
 ENABLE_KEEPALIVE_PINGS = False
 PING_EVENT_TYPE = "SCAN_PING"
 PING_EVERY_N_CYCLES = 0
@@ -505,37 +507,35 @@ def build_rr_plan(direction, trigger_df, map_levels, sweep_level, reclaim_level=
     buffer = max(px * STOP_BUFFER_PCT, atr * 0.15)
     retest_offset = max(px * 0.0005, atr * 0.08)
 
-    recent = trigger_df.tail(36).copy()
-    local_high = float(recent["high"].max())
-    local_low = float(recent["low"].min())
-
     if direction == "bullish":
         entry = base_level + retest_offset
         stop = base_level - buffer
 
-        # Scalp targets: nearby local range, not far HTF map
-        tp1 = local_high * (1 - TP1_BUFFER_PCT)
-        tp2 = local_high * (1 + TP2_BUFFER_PCT)
-
-        # fallback if target is invalid
-        if tp1 <= entry:
-            tp1 = entry + (entry - stop) * 1.25
-        if tp2 <= tp1:
-            tp2 = entry + (entry - stop) * 2.0
+        tp1 = (
+            map_levels["high"] * (1 - TP1_BUFFER_PCT)
+            if map_levels and map_levels.get("high") is not None
+            else entry + (entry - stop) * 1.5
+        )
+        tp2 = (
+            map_levels["high"] * (1 + TP2_BUFFER_PCT)
+            if map_levels and map_levels.get("high") is not None
+            else entry + (entry - stop) * 2.5
+        )
 
     else:
         entry = base_level - retest_offset
         stop = base_level + buffer
 
-        # Scalp targets: nearby local range, not far HTF map
-        tp1 = local_low * (1 + TP1_BUFFER_PCT)
-        tp2 = local_low * (1 - TP2_BUFFER_PCT)
-
-        # fallback if target is invalid
-        if tp1 >= entry:
-            tp1 = entry - (stop - entry) * 1.25
-        if tp2 >= tp1:
-            tp2 = entry - (stop - entry) * 2.0
+        tp1 = (
+            map_levels["low"] * (1 + TP1_BUFFER_PCT)
+            if map_levels and map_levels.get("low") is not None
+            else entry - (stop - entry) * 1.5
+        )
+        tp2 = (
+            map_levels["low"] * (1 - TP2_BUFFER_PCT)
+            if map_levels and map_levels.get("low") is not None
+            else entry - (stop - entry) * 2.5
+        )
 
     rr1, rr2 = calc_rr(direction, entry, stop, tp1, tp2)
 
@@ -945,34 +945,9 @@ def build_embed(
 
 
 def send_discord_alert(embed, chart_path=None):
-    if not WEBHOOK_URL or WEBHOOK_URL == "YOUR_DISCORD_WEBHOOK":
-        print("[WARN] Missing webhook. Preview only.")
-        print(json.dumps(embed, indent=2))
-        return
-
-    try:
-        payload = {"embeds": [embed]}
-        files = None
-
-        if chart_path and os.path.exists(chart_path):
-            with open(chart_path, "rb") as f:
-                files = {"file": ("chart.png", f.read(), "image/png")}
-            payload["embeds"][0]["image"] = {"url": "attachment://chart.png"}
-
-        resp = requests.post(
-            WEBHOOK_URL,
-            files=files,
-            data={"payload_json": json.dumps(payload)},
-            timeout=20,
-        )
-
-        if resp.status_code >= 300:
-            print(f"[WARN] Discord error {resp.status_code}: {resp.text}")
-        else:
-            print("[INFO] Discord alert sent.")
-
-    except Exception as e:
-        print(f"[ERROR] Discord send fail: {e}")
+    # Discord is intentionally disabled for this build.
+    # Radar bridge posting is handled separately by post_sweep_to_radar().
+    return
 
 
 # =========================================================
@@ -1088,21 +1063,6 @@ def post_sweep_to_radar(
             threshold_pct=0.25 if TRIGGER_TIMEFRAME == "1m" else 0.50,
         )
 
-        chart_window = df.tail(50)
-        chart_high = float(chart_window["high"].max())
-        chart_low = float(chart_window["low"].min())
-
-        chart_candles = [
-            {
-                "time": int(ts.timestamp()),
-                "open": float(row["open"]),
-                "high": float(row["high"]),
-                "low": float(row["low"]),
-                "close": float(row["close"]),
-            }
-            for ts, row in df.tail(180).iterrows()
-        ]
-
         payload = {
             "id": f"{event_type.lower()}_{clean_symbol_for_radar(symbol).replace('/', '_')}_{int(time.time() * 1000)}",
             "timestampUtc": (
@@ -1133,9 +1093,6 @@ def post_sweep_to_radar(
             "low": (
                 None if pd.isna(last.get("low", None)) else float(last.get("low", 0))
             ),
-            "chartHigh": chart_high,
-            "chartLow": chart_low,
-            "chartCandles": chart_candles,
             "reclaimConfirmed": event_type in ["SWEEP_RECLAIM", "SWEEP_CONFIRMED"],
             "botConfidence": round(confidence, 4),
             "strengthScore": int(strength),
@@ -1431,6 +1388,53 @@ def send_double_sweep_alert(
     send_discord_alert(embed, chart)
 
 
+
+# =========================================================
+# STARTUP BRIDGE TEST
+# =========================================================
+
+
+def post_startup_bridge_test():
+    if not ENABLE_RADAR_POST or not STARTUP_TEST_ENABLED:
+        return
+
+    payload = {
+        "id": f"startup_test_{int(time.time() * 1000)}",
+        "timestampUtc": datetime.now(UTC).isoformat(),
+        "pair": STARTUP_TEST_PAIR,
+        "timeframe": TRIGGER_TIMEFRAME,
+        "session": "Startup Test",
+        "directionBias": "Short",
+        "eventType": "SWEEP_CONFIRMED",
+        "sweepType": "Bridge Test",
+        "emaContext": "Startup Bridge Test",
+        "structure": "Local + live bridge verification",
+        "pattern": "Bridge Test",
+        "tradeState": "TEST",
+        "distanceFromEntryPct": 0,
+        "currentPrice": 1.0,
+        "price": 1.0,
+        "reclaimConfirmed": True,
+        "botConfidence": 0.99,
+        "strengthScore": 99,
+        "entry": 1.0,
+        "stop": 1.01,
+        "tp1": 0.98,
+        "tp2": 0.97,
+        "rr1": 2.0,
+        "rr2": 3.0,
+    }
+
+    print("[STARTUP TEST] Posting test event to all bridge URLs...")
+    for url in BRIDGE_URLS:
+        try:
+            print(f"[STARTUP TEST ATTEMPT] {url}")
+            resp = requests.post(url, json=payload, timeout=BRIDGE_TIMEOUT)
+            print(f"[STARTUP TEST RESULT] {url} -> {resp.status_code} {resp.text[:300]}")
+        except Exception as e:
+            print(f"[STARTUP TEST ERROR] {url}: {e}")
+
+
 # =========================================================
 # MAIN LOOP
 # =========================================================
@@ -1446,6 +1450,9 @@ def main_loop():
     print()
     print(f"[INFO] Total symbols: {len(symbols)}")
     print(f"[INFO] Approx requests per cycle: {len(symbols) * 3}")
+    print()
+
+    post_startup_bridge_test()
     print()
 
     last_detected = {}
@@ -1471,6 +1478,7 @@ def main_loop():
         accepted_count = 0
         confirmed_count = 0
         double_count = 0
+        ping_count = 0
         err_count = 0
         dbg(f"\n{'='*60}")
         dbg(f"[CYCLE {cycle_num}] START {datetime.now(UTC).strftime('%H:%M:%S')} UTC")
