@@ -2,6 +2,20 @@ import 'dotenv/config'
 import OpenAI from 'openai'
 import express from 'express'
 import cors from 'cors'
+
+app.use(
+  cors({
+    origin: [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'https://redoctobersystems.com',
+      'https://www.redoctobersystems.com',
+      'https://liquidity-lab-git-main-dougywucharts-7220s-projects.vercel.app',
+      'https://liquidity-78zxh6lq1-dougywucharts-7220s-projects.vercel.app'
+    ],
+    credentials: true
+  })
+)
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import Stripe from 'stripe'
@@ -35,7 +49,6 @@ const ALERT_TO_EMAIL = process.env.ALERT_TO_EMAIL || ''
 // ---------------- APP ----------------
 const app = express()
 app.use(express.json({ limit: '10mb' }))
-
 
 app.use(
   cors({
