@@ -1,12 +1,22 @@
 import 'dotenv/config'
 import OpenAI from 'openai'
 import express from 'express'
-import express from 'express'
 import cors from 'cors'
 
-const app = express()
+const app = express() // MUST come before app.use
 
-app.use(cors())
+app.use(
+  cors({
+    origin: [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'https://redoctobersystems.com',
+      'https://www.redoctobersystems.com',
+      'https://liquidity-lab-git-main-dougywucharts-7220s-projects.vercel.app'
+    ],
+    credentials: true
+  })
+)
 
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
@@ -39,21 +49,7 @@ const ALERT_FROM_EMAIL =
 const ALERT_TO_EMAIL = process.env.ALERT_TO_EMAIL || ''
 
 // ---------------- APP ----------------
-const app = express()
-app.use(express.json({ limit: '10mb' }))
 
-app.use(
-  cors({
-    origin: [
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'https://redoctobersystems.com',
-      'https://www.redoctobersystems.com'
-    ],
-    methods: ['GET', 'POST'],
-    credentials: true
-  })
-)
 const PORT = Number(process.env.PORT || 5000)
 const APP_URL = process.env.APP_URL || 'http://localhost:5173'
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me'
