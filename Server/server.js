@@ -1,9 +1,13 @@
 import 'dotenv/config'
 import OpenAI from 'openai'
 import express from 'express'
+import express from 'express'
 import cors from 'cors'
 
+const app = express()
+
 app.use(cors())
+
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import Stripe from 'stripe'
