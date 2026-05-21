@@ -529,8 +529,8 @@ app.post('/sweep', (req, res) => {
       event.timestamp ||
       event.time ||
       new Date().toISOString(),
-    pair,
-    ...event
+    ...event,
+    pair
   }
 
   events.unshift(saved)
