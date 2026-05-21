@@ -1345,12 +1345,7 @@ const styles = {
     position: "relative",
     zIndex: 6,
   },
-  exchangeLabel: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.52)",
-    fontWeight: 800,
-    letterSpacing: 0.4,
-  },
+
   chartFrame: {
     borderRadius: 18,
     border: `1px solid ${palette.border}`,
@@ -1992,13 +1987,7 @@ export default function AppPreBeta() {
   });
   const isMountedRef = useRef(true);
   const [betaInput, setBetaInput] = useState("");
-  const [betaUnlocked, setBetaUnlocked] = useState(() => {
-    try {
-      return localStorage.getItem("beta_access") === "granted";
-    } catch {
-      return false;
-    }
-  });
+  const betaUnlocked = true;
 
   function toggleLogCard(id) {
     setExpandedLogId((prev) => (prev === id ? null : id));
@@ -2858,79 +2847,6 @@ export default function AppPreBeta() {
   const displayDecisions = showInsights
     ? loggedDecisions
     : loggedDecisions.slice(0, 3);
-
-  if (!betaUnlocked) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          display: "grid",
-          placeItems: "center",
-          background: "#03060b",
-          color: "#fff",
-          fontFamily: "Inter, sans-serif",
-        }}
-      >
-        <div
-          style={{
-            width: 340,
-            maxWidth: "calc(100vw - 32px)",
-            padding: 20,
-            borderRadius: 18,
-            border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(10,14,24,0.95)",
-            boxShadow: "0 18px 42px rgba(0,0,0,0.45)",
-            display: "grid",
-            gap: 12,
-          }}
-        >
-          <div style={{ fontWeight: 900, fontSize: 20 }}>
-            Private Beta Access
-          </div>
-          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.72)" }}>
-            Enter your beta code to unlock the live radar, journal, and review
-            flow.
-          </div>
-
-          <input
-            value={betaInput}
-            onChange={(e) => setBetaInput(e.target.value)}
-            style={{
-              padding: 12,
-              borderRadius: 10,
-              border: "1px solid #333",
-              background: "#0b0f1a",
-              color: "#fff",
-              outline: "none",
-            }}
-            placeholder="Enter beta code"
-          />
-
-          <button
-            onClick={() => {
-              if (betaInput.trim() === BETA_ACCESS_CODE) {
-                localStorage.setItem("beta_access", "granted");
-                setBetaUnlocked(true);
-              } else {
-                alert("Invalid beta code");
-              }
-            }}
-            style={{
-              padding: 12,
-              borderRadius: 12,
-              background: "#ef4444",
-              color: "#fff",
-              border: "none",
-              fontWeight: 800,
-              cursor: "pointer",
-            }}
-          >
-            Enter Beta
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   if (!isAuthenticated) {
     return (

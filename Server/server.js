@@ -507,32 +507,38 @@ async function getLatestActiveSubscriptionForCustomer (customerId) {
 }
 
 // ---------------- RADAR INGEST ----------------
-
 app.post('/sweep', (req, res) => {
   const event = req.body || {}
 
-  if (!event.pair) {
-    console.log('[SWEEP BAD PAYLOAD]', req.body)
-    return res.status(400).json({ error: 'Missing pair' })
+  const pair =
+    event.pair ||
+    event.symbol ||
+    event.market ||
+    event.instId ||
+    event.instrument
+
+  if (!pair) {
+    console.log('[SWEEP BAD PAYLOAD]', event)
+    return res.status(400).json({ error: 'Missing pair', received: event })
   }
 
-  console.log(
-    '[SWEEP RECEIVED LOCAL]',
-    event.pair,
-    event.eventType || 'UNKNOWN'
-  )
-
-  events.unshift({
+  const saved = {
     id: event.id || `local_${Date.now()}`,
-    timestampUtc: event.timestampUtc || new Date().toISOString(),
+    timestampUtc:
+      event.timestampUtc ||
+      event.timestamp ||
+      event.time ||
+      new Date().toISOString(),
+    pair,
     ...event
-  })
-
-  if (events.length > 200) {
-    events.pop()
   }
 
-  res.json({ ok: true, eventCount: events.length })
+  events.unshift(saved)
+  if (events.length > 200) events.pop()
+
+  console.log('[SWEEP RECEIVED]', saved.pair, saved.eventType || 'UNKNOWN')
+
+  res.json({ ok: true, event: saved })
 })
 // ---------------- AUTH ----------------
 const BETA_ACCESS_CODE = process.env.BETA_ACCESS_CODE || ''
@@ -547,7 +553,9 @@ app.post('/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required.' })
     }
 
-    if (!betaCode || betaCode !== BETA_ACCESS_CODE) {
+    const REQUIRE_BETA_CODE = false
+
+    if (REQUIRE_BETA_CODE && (!betaCode || betaCode !== BETA_ACCESS_CODE)) {
       return res.status(403).json({ error: 'Invalid beta access code.' })
     }
 
@@ -732,22 +740,6 @@ app.get('/test-sweep', (_req, res) => {
   if (events.length > MAX_EVENTS) events.pop()
 
   res.json({ ok: true, fake })
-})
-
-app.post('/sweep', async (req, res) => {
-  try {
-    events.unshift(req.body)
-    if (events.length > MAX_EVENTS) events.pop()
-
-    sendSweepAlertEmail(req.body).catch(err => {
-      console.error('[EMAIL] sweep alert failed:', err.message)
-    })
-
-    res.json({ ok: true })
-  } catch (err) {
-    console.error('Sweep route error:', err)
-    res.status(500).json({ ok: false, error: 'Failed to process sweep' })
-  }
 })
 
 // ---------------- AI REVIEW ----------------
