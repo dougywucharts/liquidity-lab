@@ -18,6 +18,9 @@ app.use(
   })
 )
 
+app.use(express.json({ limit: '10mb' }))
+app.use(express.urlencoded({ extended: true }))
+
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import Stripe from 'stripe'
