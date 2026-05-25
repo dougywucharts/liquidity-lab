@@ -1258,11 +1258,11 @@ const styles = {
   },
   mainGrid: {
     display: "grid",
-    gridTemplateColumns: "260px 1fr 300px",
+    gridTemplateColumns: "280px 1fr 300px",
     gap: 12,
     width: "100%",
     alignItems: "stretch",
-    height: "clamp(580px, 70vh, 760px)",
+    height: "clamp(620px, 74vh, 800px)",
   },
   panel: {
     borderRadius: 20,
@@ -1300,7 +1300,8 @@ const styles = {
     display: "grid",
     gap: 12,
     flex: 1,
-    overflow: "auto",
+    overflowY: "auto",
+    overflowX: "visible",
     alignContent: "start",
     alignItems: "start",
     minHeight: 0,
@@ -1330,22 +1331,14 @@ const styles = {
   waveCard: {
     borderRadius: 16,
     padding: "10px 12px",
-    background: "rgba(10,14,22,0.9)",
-    border: "1px solid rgba(255,255,255,0.06)",
+    minHeight: 72,
+    height: "100%",
+    background: "rgba(10,14,22,0.92)",
+    border: "1px solid rgba(255,255,255,0.08)",
     transition: "all 0.15s ease",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+    boxShadow: "0 6px 16px rgba(0,0,0,0.32)",
+    overflow: "hidden",
   },
-  expandedList: {
-    display: "grid",
-    gap: 8,
-    padding: "12px 12px 14px 12px",
-    borderTop: `1px solid ${palette.borderSoft}`,
-    background:
-      "linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.012))",
-    position: "relative",
-    zIndex: 6,
-  },
-
   chartFrame: {
     borderRadius: 18,
     border: `1px solid ${palette.border}`,
@@ -1403,7 +1396,7 @@ const styles = {
     border: `1px solid ${palette.border}`,
     background: palette.panel,
     overflow: "hidden",
-    maxHeight: 170,
+    maxHeight: "none",
   },
   aiHeader: {
     display: "flex",
@@ -1618,7 +1611,11 @@ function SessionClockWidget() {
     <div style={styles.sessionWidget}>
       {sessions.map((session) => {
         const display = formatMilitary(new Date(now), session.timeZone);
-        const localHour = new Date(now).getHours();
+        const localHour = new Intl.DateTimeFormat("en-US", {
+          timeZone: session.timeZone,
+          hour: "numeric",
+          hour12: false,
+        }).format(now);
 
         const active = isPrime(
           localHour,
@@ -2139,7 +2136,6 @@ export default function AppPreBeta() {
 
     setChartLoading(true);
     setChartFailed(false);
-    setChartReloadKey((k) => k + 1);
 
     chartTimeoutRef.current = setTimeout(() => {
       setChartLoading(false);
@@ -2481,7 +2477,6 @@ export default function AppPreBeta() {
     if (chartTimeoutRef.current) clearTimeout(chartTimeoutRef.current);
     setChartLoading(true);
     setChartFailed(false);
-    setChartReloadKey((k) => k + 1);
     chartTimeoutRef.current = setTimeout(() => {
       setChartLoading(false);
       setChartFailed(true);
@@ -3048,9 +3043,10 @@ export default function AppPreBeta() {
             <div
               style={{
                 ...styles.panel,
-                height: 500,
+                height: "100%",
+                alignSelf: "stretch",
                 minHeight: 0,
-                overflow: "hidden",
+                overflow: "visible",
                 display: "flex",
                 flexDirection: "column",
                 minWidth: 0,
@@ -3076,73 +3072,36 @@ export default function AppPreBeta() {
                   minHeight: 0,
                   overflowY: "auto",
                   overflowX: "hidden",
+                  gridAutoRows: "minmax(72px, 1fr)",
                 }}
               >
                 {visibleWaves.length > 0 ? (
                   visibleWaves.map((wave) => {
                     const tone = directionTone(wave.directionBias);
-                    const isExpanded = Boolean(expandedWaves[wave.key]);
+                    const conf = Math.round((wave.avgConfidence || 0) * 100);
 
                     return (
                       <div
                         key={wave.key}
+                        onClick={() => selectWaveHead(wave)}
                         style={{
                           ...styles.waveCard,
-                          minHeight: 72,
-                          padding: "10px 12px 12px",
-
-                          borderLeft:
-                            tone === "long"
-                              ? "3px solid #4ade80"
-                              : tone === "short"
-                                ? "3px solid #fb7185"
-                                : "3px solid #f6c453",
-                          boxShadow:
-                            tone === "long"
-                              ? "0 0 0 1px rgba(74,222,128,0.35), 0 0 18px rgba(74,222,128,0.18)"
-                              : tone === "short"
-                                ? "0 0 0 1px rgba(251,113,133,0.35), 0 0 18px rgba(251,113,133,0.18)"
-                                : "0 0 0 1px rgba(246,196,83,0.35), 0 0 18px rgba(246,196,83,0.18)",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = "translateY(-2px)";
-                          e.currentTarget.style.boxShadow =
-                            tone === "long"
-                              ? "0 0 0 1px rgba(74,222,128,0.45), 0 18px 40px rgba(0,0,0,0.45)"
-                              : tone === "short"
-                                ? "0 0 0 1px rgba(251,113,133,0.45), 0 18px 40px rgba(0,0,0,0.45)"
-                                : "0 0 0 1px rgba(246,196,83,0.45), 0 18px 40px rgba(0,0,0,0.45)";
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = "translateY(0px)";
-                          e.currentTarget.style.boxShadow =
-                            tone === "long"
-                              ? "0 0 0 1px rgba(74,222,128,0.25), 0 10px 24px rgba(0,0,0,0.35)"
-                              : tone === "short"
-                                ? "0 0 0 1px rgba(251,113,133,0.25), 0 10px 24px rgba(0,0,0,0.35)"
-                                : "0 0 0 1px rgba(246,196,83,0.25), 0 10px 24px rgba(0,0,0,0.35)";
+                          borderLeft: `4px solid ${
+                            tone === "long" ? palette.long : palette.short
+                          }`,
+                          cursor: "pointer",
+                          overflow: "hidden",
                         }}
                       >
-                        {/* HEADER */}
                         <div
-                          onClick={() => selectWaveHead(wave)}
                           style={{
                             display: "grid",
                             gridTemplateColumns: "1fr auto",
-                            gap: 6,
-                            padding: "8px 10px",
-                            cursor: "pointer",
+                            gap: 8,
+                            alignItems: "center",
                           }}
                         >
-                          {/* LEFT SIDE */}
-                          <div
-                            style={{
-                              display: "flex",
-                              flexDirection: "column",
-                              gap: 4, // 👈 slightly more breathing room
-                            }}
-                          >
-                            {/* ROW 1 */}
+                          <div style={{ display: "grid", gap: 5, minWidth: 0 }}>
                             <div
                               style={{
                                 display: "flex",
@@ -3154,13 +3113,10 @@ export default function AppPreBeta() {
                                 style={{
                                   fontWeight: 900,
                                   fontSize: 14,
-                                  letterSpacing: 0.4,
                                   color:
                                     tone === "long"
-                                      ? "#4ade80"
-                                      : tone === "short"
-                                        ? "#fb7185"
-                                        : "#f6c453",
+                                      ? palette.long
+                                      : palette.short,
                                 }}
                               >
                                 {wave.pair}
@@ -3172,20 +3128,20 @@ export default function AppPreBeta() {
                                   fontWeight: 900,
                                   padding: "2px 6px",
                                   borderRadius: 999,
-                                  opacity: 0.7,
                                   background:
                                     tone === "long"
                                       ? "rgba(74,222,128,0.12)"
                                       : "rgba(251,113,133,0.12)",
                                   color:
-                                    tone === "long" ? "#4ade80" : "#fb7185",
+                                    tone === "long"
+                                      ? palette.long
+                                      : palette.short,
                                 }}
                               >
                                 {wave.directionBias}
                               </span>
                             </div>
 
-                            {/* ROW 2 */}
                             <div
                               style={{
                                 fontSize: 10,
@@ -3197,104 +3153,55 @@ export default function AppPreBeta() {
                               }}
                             >
                               {wave.timeframe || "1m"} •{" "}
-                              {wave.events?.[0]?.eventType || "SWEEP"}
+                              {wave.eventType || "SWEEP"} • {wave.sweepType}
                             </div>
 
-                            {/* ROW 3 */}
                             <div
                               style={{
                                 fontSize: 9,
                                 fontWeight: 800,
-                                color: palette.textSoft,
-                                opacity: 0.72,
+                                color: palette.textDim,
                               }}
                             >
                               {wave.events?.length || 1}x •{" "}
                               {minutesAgo(wave.events?.[0]?.timestampUtc)}
                             </div>
 
-                            {/* CONFIDENCE BAR */}
                             <div
                               style={{
                                 height: 5,
                                 borderRadius: 999,
-                                background: "rgba(255,255,255,0.16)",
+                                background: "rgba(255,255,255,0.10)",
                                 overflow: "hidden",
-                                marginTop: 5,
-                                width: "100%",
                               }}
                             >
                               <div
                                 style={{
-                                  width: `${Math.max(
-                                    8,
-                                    Math.round(
-                                      (wave.events?.[0]?.botConfidence || 0) *
-                                        100,
-                                    ),
-                                  )}%`,
                                   height: "100%",
-                                  borderRadius: 999,
+                                  width: `${conf}%`,
                                   background:
                                     tone === "long"
-                                      ? "linear-gradient(90deg, #16a34a, #86efac)"
-                                      : tone === "short"
-                                        ? "linear-gradient(90deg, #dc2626, #fb7185)"
-                                        : "linear-gradient(90deg, #d97706, #fde68a)",
-                                  boxShadow:
-                                    tone === "long"
-                                      ? "0 0 10px rgba(74,222,128,0.75)"
-                                      : tone === "short"
-                                        ? "0 0 10px rgba(251,113,133,0.75)"
-                                        : "0 0 10px rgba(246,196,83,0.75)",
+                                      ? palette.long
+                                      : palette.short,
+                                  borderRadius: 999,
                                 }}
                               />
                             </div>
                           </div>
 
-                          {/* RIGHT SIDE */}
-                          <button
-                            style={{
-                              ...styles.button,
-                              fontSize: 11,
-                              padding: "4px 8px",
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setExpandedWaves((prev) => ({
-                                ...prev,
-                                [wave.key]: !prev[wave.key],
-                              }));
-                            }}
-                          >
-                            {isExpanded ? "−" : "+"}
-                          </button>
-                        </div>
-
-                        {/* EXPANDED */}
-                        {isExpanded && (
                           <div
                             style={{
-                              padding: 12,
-                              borderTop: `1px solid ${palette.borderSoft}`,
+                              fontSize: 11,
+                              fontWeight: 900,
+                              color:
+                                tone === "long" ? palette.long : palette.short,
+                              minWidth: 38,
+                              textAlign: "right",
                             }}
                           >
-                            <div style={styles.topCardRow}>
-                              <MiniBox
-                                label="Entry"
-                                value={num(wave.events[0]?.entry)}
-                              />
-                              <MiniBox
-                                label="TP1"
-                                value={num(wave.events[0]?.tp1)}
-                              />
-                              <MiniBox
-                                label="TP2"
-                                value={num(wave.events[0]?.tp2)}
-                              />
-                            </div>
+                            {conf}%
                           </div>
-                        )}
+                        </div>
                       </div>
                     );
                   })
