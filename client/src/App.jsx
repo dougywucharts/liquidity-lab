@@ -1924,6 +1924,8 @@ export default function AppPreBeta() {
   const [chartReloadKey, setChartReloadKey] = useState(0);
   const chartTimeoutRef = useRef(null);
 
+  const [chartEvent, setChartEvent] = useState(null);
+
   const [decisionForm, setDecisionForm] = useState({
     timeframe: "1m",
     session: "New York",
@@ -2171,15 +2173,17 @@ export default function AppPreBeta() {
     return map[timeframe] || "3";
   }
 
+  const chartBaseEvent = chartEvent || selectedEvent;
+
   const chartPair =
     logMode === "manual"
       ? decisionForm.pair || "BTC/USDT"
-      : selectedEvent?.pair || "BTC/USDT";
+      : chartBaseEvent?.pair || "BTC/USDT";
 
   const activeTimeframe =
     logMode === "manual"
       ? decisionForm.timeframe || "3m"
-      : selectedEvent?.timeframe || decisionForm.timeframe || "3m";
+      : chartBaseEvent?.timeframe || decisionForm.timeframe || "3m";
 
   const chartSymbol = getTradingViewSymbol(chartPair);
   const chartInterval = getTradingViewInterval(activeTimeframe);
@@ -2195,21 +2199,22 @@ export default function AppPreBeta() {
     tradingView: `https://www.tradingview.com/chart/?symbol=BINANCE:${basePair}`,
   };
 
-  const chartSrc =
-    `https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart` +
-    `&symbol=${encodeURIComponent(chartSymbol)}` +
-    `&interval=${encodeURIComponent(chartInterval)}` +
-    `&hidesidetoolbar=0` +
-    `&symboledit=1` +
-    `&saveimage=1` +
-    `&toolbarbg=0f172a` +
-    `&studies=[]` +
-    `&theme=dark` +
-    `&style=1` +
-    `&timezone=America%2FNew_York` +
-    `&withdateranges=1` +
-    `&hideideas=1` +
-    `&range=30`;
+  const chartSrc = useMemo(() => {
+    return (
+      "https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart" +
+      `&symbol=${encodeURIComponent(chartSymbol)}` +
+      `&interval=${encodeURIComponent(chartInterval)}` +
+      "&hidesidetoolbar=1" +
+      "&symboledit=1" +
+      "&saveimage=0" +
+      "&toolbarbg=F1F3F6" +
+      "&studies=[]" +
+      "&theme=dark" +
+      "&style=1" +
+      "&timezone=Etc%2FUTC" +
+      "&withdateranges=1"
+    );
+  }, [chartReloadKey]);
 
   const waves = useMemo(() => groupWaves(events), [events]);
 
@@ -2485,7 +2490,11 @@ export default function AppPreBeta() {
 
   function selectWaveHead(wave) {
     const head = wave?.events?.[0];
-    if (head) setSelectedEvent(head);
+
+    if (head) {
+      setSelectedEvent(head);
+      setChartEvent(head);
+    }
   }
 
   async function reportIssue() {
@@ -3237,7 +3246,7 @@ export default function AppPreBeta() {
                   <LightweightExecutionChart event={selectedEvent} />
                 ) : (
                   <iframe
-                    key={`${chartSymbol}_${chartInterval}_${chartReloadKey}`}
+                    key={chartReloadKey}
                     src={chartSrc}
                     style={{
                       width: "100%",
