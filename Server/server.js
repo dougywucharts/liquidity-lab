@@ -651,7 +651,7 @@ app.post('/login', async (req, res) => {
         id: user.id,
         email: user.email,
         billingPlan: user.billingPlan || 'starter',
-        stripeStatus: user.billingStatus || '',
+        stripeStatus: user.stripeStatus || user.stripeStatus || '',
         stripeCustomerId: user.stripeCustomerId || ''
       }
     })
@@ -671,9 +671,10 @@ app.get('/me', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'User not found.' })
     }
 
-    const isBetaFullAccess =
-      user.isBetaUser &&
-      String(process.env.BETA_FULL_ACCESS || '').toLowerCase() === 'true'
+    const hasProAccess =
+      user.billingPlan === 'pro' ||
+      user.billingPlan === 'pro_beta' ||
+      user.billingPlan === 'core'
 
     const screenshotLimit = 5
     const screenshotRemaining = Math.max(
@@ -685,8 +686,8 @@ app.get('/me', requireAuth, async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        billingPlan: user.billingPlan,
-        stripeStatus: user.stripeStatus,
+        billingPlan: user.billingPlan || 'starter',
+        stripeStatus: user.stripeStatus || 'inactive',
         stripeCustomerId: user.stripeCustomerId || '',
         isBetaUser: user.isBetaUser,
         screenshotRemaining,
@@ -696,10 +697,10 @@ app.get('/me', requireAuth, async (req, res) => {
         ),
         featureFlags: {
           manualJournal: true,
-          aiReview: isBetaFullAccess,
-          screenshotReview: isBetaFullAccess,
-          export: isBetaFullAccess,
-          deeperStats: isBetaFullAccess
+          aiReview: hasProAccess,
+          screenshotReview: hasProAccess,
+          export: hasProAccess,
+          deeperStats: hasProAccess
         }
       }
     })
@@ -708,7 +709,6 @@ app.get('/me', requireAuth, async (req, res) => {
     return res.status(500).json({ error: 'Failed to load profile.' })
   }
 })
-
 // ---------------- RADAR ----------------
 const events = []
 const MAX_EVENTS = 300
@@ -1087,7 +1087,7 @@ app.post('/stripe/sync', requireAuth, async (req, res) => {
     if (!req.user.stripeCustomerId) {
       return res.json({
         ok: true,
-        stripeStatus: req.user.billingStatus || 'free',
+        stripeStatus: req.user.stripeStatus || 'free',
         billingPlan: req.user.billingPlan || 'starter'
       })
     }
@@ -1121,7 +1121,7 @@ app.post('/stripe/sync', requireAuth, async (req, res) => {
     if (!activeLike) {
       return res.json({
         ok: true,
-        stripeStatus: req.user.billingStatus || 'free',
+        stripeStatus: req.user.stripeStatus || 'free',
         billingPlan: req.user.billingPlan || 'starter',
         note: 'No active-like subscription found during sync; kept existing billing state.'
       })
@@ -1134,7 +1134,7 @@ app.post('/stripe/sync', requireAuth, async (req, res) => {
       data: {
         stripeSubId: activeLike.id || null,
         stripePriceId: priceId,
-        billingStatus: activeLike.status || req.user.billingStatus || 'free',
+        stripeStatus: activeLike.status || req.user.stripeStatus || 'free',
         billingPlan: resolveBillingPlanFromPriceId(priceId),
         billingPeriodEnd: activeLike.current_period_end
           ? new Date(activeLike.current_period_end * 1000)
@@ -1143,9 +1143,15 @@ app.post('/stripe/sync', requireAuth, async (req, res) => {
       }
     })
 
+    const screenshotLimit = 5
+    const screenshotRemaining = Math.max(
+      0,
+      screenshotLimit - (user.screenshotCount || 0)
+    )
+
     return res.json({
       ok: true,
-      stripeStatus: activeLike.status || req.user.billingStatus || 'free',
+      stripeStatus: activeLike.status || req.user.stripeStatus || 'free',
       billingPlan: resolveBillingPlanFromPriceId(priceId)
     })
   } catch (err) {
