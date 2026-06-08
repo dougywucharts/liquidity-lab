@@ -150,11 +150,19 @@ async function runAiTradeReview (payload) {
       avoidGenericFeedback: true
     },
     requiredJsonShape: {
-      score: 'number 0-100',
+      tradeScore: 'number 0-100',
+      aiGrade: 'A+, A, B+, B, C, D, or F',
+
+      setupScore: 'number 0-25',
+      executionScore: 'number 0-25',
+      managementScore: 'number 0-20',
+      disciplineScoreAi: 'number 0-15',
+
       verdict: 'short direct verdict',
       strengths: ['specific things done well'],
       mistakes: ['specific issues or rule breaks'],
       coaching: 'specific correction for next time',
+      scoreNotes: 'short explanation of why this score was assigned',
       comparison: 'compare userStats vs groupStats if provided'
     }
   }
@@ -212,6 +220,98 @@ async function requireAuth (req, res, next) {
   } catch (err) {
     console.error('Auth error:', err?.message || err)
     return res.status(401).json({ error: 'Unauthorized' })
+  }
+}
+
+function getGrade (score) {
+  if (score >= 95) return 'A+'
+  if (score >= 90) return 'A'
+  if (score >= 85) return 'B+'
+  if (score >= 80) return 'B'
+  if (score >= 70) return 'C'
+  if (score >= 60) return 'D'
+  return 'F'
+}
+
+function buildTradeScorecard (trade) {
+  let setupScore = 15
+  let entryScore = 20
+  let riskScore = 20
+  let disciplineScore = 15
+  let emotionScore = 15
+  const notes = []
+
+  const entry = Number(trade.entry || trade.entryPrice || 0)
+  const stop = Number(trade.stop || trade.stopLoss || 0)
+  const tp1 = Number(trade.tp1 || trade.takeProfit || 0)
+
+  if (!stop) {
+    riskScore -= 15
+    notes.push('No stop loss defined.')
+  }
+
+  if (entry && stop && tp1) {
+    const risk = Math.abs(entry - stop)
+    const reward = Math.abs(tp1 - entry)
+    const rr = risk > 0 ? reward / risk : 0
+
+    if (rr < 1.5) {
+      riskScore -= 8
+      notes.push('Risk/reward was weak.')
+    } else if (rr >= 2) {
+      riskScore += 5
+      notes.push('Risk/reward was strong.')
+    }
+  }
+
+  const text = `${trade.notes || ''} ${trade.reason || ''} ${
+    trade.setup || ''
+  }`.toLowerCase()
+
+  if (
+    text.includes('fomo') ||
+    text.includes('chase') ||
+    text.includes('chased')
+  ) {
+    entryScore -= 10
+    emotionScore -= 5
+    notes.push('Possible chase/FOMO entry.')
+  }
+
+  if (text.includes('early') || text.includes('before confirmation')) {
+    entryScore -= 10
+    disciplineScore -= 5
+    notes.push('Entered before confirmation.')
+  }
+
+  if (text.includes('revenge')) {
+    emotionScore -= 10
+    notes.push('Possible revenge trade.')
+  }
+
+  if (text.includes('sweep')) setupScore += 5
+  if (text.includes('rejection')) setupScore += 3
+  if (text.includes('breakdown') || text.includes('bos')) entryScore += 5
+  if (text.includes('followed plan')) disciplineScore += 5
+
+  setupScore = Math.max(0, Math.min(25, setupScore))
+  entryScore = Math.max(0, Math.min(25, entryScore))
+  riskScore = Math.max(0, Math.min(20, riskScore))
+  disciplineScore = Math.max(0, Math.min(15, disciplineScore))
+  emotionScore = Math.max(0, Math.min(15, emotionScore))
+
+  const tradeScore =
+    setupScore + entryScore + riskScore + disciplineScore + emotionScore
+
+  return {
+    tradeScore,
+    aiScore: tradeScore,
+    setupScore,
+    executionScore: entryScore,
+    managementScore: riskScore,
+    disciplineScoreAi: disciplineScore,
+    aiGrade: getGrade(tradeScore),
+    scoreNotes: notes.join(' ') || 'No major issues detected.'
   }
 }
 
@@ -854,6 +954,7 @@ app.post('/logs', requireAuth, async (req, res) => {
     }
 
     const aiAnalysis = analyzeTrade(payload)
+    const scorecard = buildTradeScorecard(payload)
 
     const entryNum =
       payload.entry === null ||
@@ -945,14 +1046,17 @@ app.post('/logs', requireAuth, async (req, res) => {
         reclaimConfirmed: Boolean(payload.reclaimConfirmed),
 
         aiStatus: 'ready',
-        aiScore: aiAnalysis.overallScore,
-        aiGrade: aiAnalysis.overallGrade,
+        aiScore: scorecard.aiScore,
+        tradeScore: scorecard.tradeScore,
+        aiGrade: scorecard.aiGrade,
         aiSummary: aiAnalysis.summary,
         aiCoachingNote: aiAnalysis.coachingTip,
 
-        setupScore: aiAnalysis.setupScore,
-        executionScore: aiAnalysis.executionScore,
-        managementScore: aiAnalysis.managementScore,
+        setupScore: scorecard.setupScore,
+        executionScore: scorecard.executionScore,
+        managementScore: scorecard.managementScore,
+        disciplineScoreAi: scorecard.disciplineScoreAi,
+        scoreNotes: scorecard.scoreNotes,
         chartRead: aiAnalysis.chartRead,
         setupAssessment: aiAnalysis.setupAssessment,
         executionAssessment: aiAnalysis.executionAssessment,

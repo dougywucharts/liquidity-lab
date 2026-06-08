@@ -76,6 +76,9 @@ model TradeLog {
   aiCoachingNote      String?
   aiStatus            String?
 
+  tradeScore          Int?
+  scoreNotes          String?
+
   setupScore          Int?
   executionScore      Int?
   managementScore     Int?
