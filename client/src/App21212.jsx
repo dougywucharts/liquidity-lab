@@ -3,92 +3,6 @@ import "./styles.css";
 import { createChart, CandlestickSeries, LineSeries } from "lightweight-charts";
 import BillingPage from "./BillingPage.jsx";
 
-// ─── Mobile responsive styles injected globally ──────────────────────────────
-const mobileCSS = `
-  @media (max-width: 768px) {
-    /* Main 3-col grid → single column stack */
-    .llab-main-grid {
-      grid-template-columns: 1fr !important;
-      height: auto !important;
-    }
-    /* Radar panel height cap on mobile */
-    .llab-radar-panel {
-      height: 280px !important;
-      min-height: 280px !important;
-    }
-    /* Stats bar → 2x2 */
-    .llab-stats-bar {
-      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
-    }
-    /* Session clocks → horizontal scroll */
-    .llab-session-clocks {
-      grid-template-columns: repeat(3, minmax(200px,1fr)) !important;
-      overflow-x: auto !important;
-      -webkit-overflow-scrolling: touch !important;
-      padding-bottom: 6px !important;
-    }
-    /* Signal insight bar → 2 rows of 4 */
-    .llab-signal-bar {
-      grid-template-columns: repeat(4, minmax(0,1fr)) !important;
-    }
-    /* Journal form grids → 2 col max */
-    .llab-form-4col {
-      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
-    }
-    .llab-form-3col {
-      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
-    }
-    .llab-price-levels {
-      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
-    }
-    /* Top card row → 2x2 */
-    .llab-top-card-row {
-      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
-    }
-    /* Top bar buttons wrap */
-    .llab-topbar-buttons {
-      gap: 6px !important;
-    }
-    .llab-topbar-buttons button {
-      padding: 7px 10px !important;
-      font-size: 12px !important;
-    }
-    /* Brand text smaller */
-    .llab-brand-title {
-      font-size: 18px !important;
-    }
-    /* Chart min height on mobile */
-    .llab-chart-frame {
-      min-height: 280px !important;
-    }
-    /* QuickClose grid → stack */
-    .llab-quick-close {
-      grid-template-columns: 1fr 1fr !important;
-    }
-    /* Shell padding tighter */
-    .llab-shell {
-      padding: 8px 10px !important;
-      gap: 8px !important;
-    }
-    /* Hide right panel (Decision Context) on mobile — show below chart instead */
-    .llab-right-panel {
-      display: none !important;
-    }
-    /* Mobile-only decision context summary */
-    .llab-mobile-context {
-      display: flex !important;
-    }
-  }
-  @media (min-width: 769px) {
-    .llab-mobile-context { display: none !important; }
-    .llab-right-panel { display: flex !important; }
-  }
-`;
-
-function MobileStyles() {
-  return <style>{mobileCSS}</style>;
-}
-
 const cardButtonReset = {
   appearance: "none",
   WebkitAppearance: "none",
@@ -190,6 +104,8 @@ const fieldStyle = {
   fontSize: 13,
 };
 
+// ─── helpers ────────────────────────────────────────────────────────────────
+
 function parseEventDate(ts) {
   if (!ts) return null;
   const raw = String(ts).trim();
@@ -260,7 +176,10 @@ function calcPlannedRR(entry, stop, tp1, tp2, rr1, rr2) {
 function sanitizePrice(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n === 0) return "";
+  // Convert to string and detect natural precision, cap at 8 decimal places
+  // This strips float artifacts like 62.9483149999999994 but keeps 0.08234897 intact
   const str = n.toFixed(10);
+  // Remove trailing zeros after decimal, but keep meaningful digits
   const trimmed = str.replace(/(\.\d*?)0{4,}\d*$/, "$1").replace(/\.$/, "");
   const result = parseFloat(trimmed);
   return Number.isFinite(result)
@@ -292,7 +211,7 @@ function calcRiskAmount(entry, stop) {
 function rrText(rr, maxPlausible = 50) {
   const n = Number(rr);
   if (rr == null || !Number.isFinite(n)) return "—";
-  if (Math.abs(n) > maxPlausible) return "—";
+  if (Math.abs(n) > maxPlausible) return "—"; // guard against exit=0 artifacts
   return `${n.toFixed(2)}R`;
 }
 
@@ -444,6 +363,27 @@ function bestTickerItems(waves, limit = 10) {
     }));
 }
 
+function getTvInterval(tf) {
+  const map = {
+    "1m": "1",
+    "3m": "3",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "1h": "60",
+    "4h": "240",
+    "1d": "D",
+    d: "D",
+  };
+  return (
+    map[
+      String(tf || "")
+        .trim()
+        .toLowerCase()
+    ] || "15"
+  );
+}
+
 function getSignalAgeMinutes(timestampUtc) {
   const d = parseEventDate(timestampUtc);
   if (!d) return 999;
@@ -591,25 +531,6 @@ function Divider() {
   );
 }
 
-function FieldLabel({ label, children }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <div
-        style={{
-          fontSize: 10,
-          fontWeight: 800,
-          textTransform: "uppercase",
-          letterSpacing: 0.9,
-          color: palette.textDim,
-        }}
-      >
-        {label}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 // ─── SmartTicker ─────────────────────────────────────────────────────────────
 
 function SmartTicker({ items, onSelect }) {
@@ -749,7 +670,6 @@ function SessionClockWidget() {
       key: "ny",
       label: "New York",
       tzLabel: "NY",
-      utcLabel: "UTC-4/5",
       timeZone: "America/New_York",
       localPrimeStart: 8,
       localPrimeEnd: 12,
@@ -758,7 +678,6 @@ function SessionClockWidget() {
       key: "london",
       label: "London",
       tzLabel: "LDN",
-      utcLabel: "UTC+0/1",
       timeZone: "Europe/London",
       localPrimeStart: 3,
       localPrimeEnd: 6,
@@ -767,7 +686,6 @@ function SessionClockWidget() {
       key: "asia",
       label: "Asia / Tokyo",
       tzLabel: "TKY",
-      utcLabel: "UTC+9",
       timeZone: "Asia/Tokyo",
       localPrimeStart: 20,
       localPrimeEnd: 23,
@@ -781,7 +699,9 @@ function SessionClockWidget() {
       minute: "2-digit",
       hour12: false,
     }).formatToParts(date);
-    return `${parts.find((p) => p.type === "hour")?.value || "00"}:${parts.find((p) => p.type === "minute")?.value || "00"}`;
+    const hh = parts.find((p) => p.type === "hour")?.value || "00";
+    const mm = parts.find((p) => p.type === "minute")?.value || "00";
+    return `${hh}:${mm}`;
   }
 
   function isPrime(hour, openHour, closeHour) {
@@ -792,7 +712,6 @@ function SessionClockWidget() {
   return (
     <div
       style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}
-      className="llab-session-clocks"
     >
       {sessions.map((session) => {
         const display = formatMilitary(new Date(now), session.timeZone);
@@ -867,20 +786,10 @@ function SessionClockWidget() {
               >
                 {session.tzLabel}
               </span>
-              <span
-                style={{
-                  fontSize: 10,
-                  color: palette.textDim,
-                  marginLeft: 6,
-                  opacity: 0.7,
-                }}
-              >
-                {session.utcLabel}
-              </span>
             </div>
             <div style={{ fontSize: 11, color: palette.textSoft }}>
-              Prime: {session.localPrimeStart}:00–{session.localPrimeEnd}:00
-              local
+              Prime window: {session.localPrimeStart}:00–{session.localPrimeEnd}
+              :00
             </div>
           </div>
         );
@@ -961,7 +870,6 @@ function SignalInsightBar({ event, rr, risk }) {
         gridTemplateColumns: "repeat(7,minmax(0,1fr))",
         gap: 6,
       }}
-      className="llab-signal-bar"
     >
       <InsightBox
         label="ENTRY"
@@ -1283,58 +1191,24 @@ function LightweightExecutionChart({ event }) {
   return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
 }
 
-// ─── PnlSparkline ────────────────────────────────────────────────────────────
+// ─── FieldLabel ───────────────────────────────────────────────────────────────
 
-function PnlSparkline({ decisions }) {
-  const points = useMemo(() => {
-    let running = 0;
-    return decisions
-      .slice()
-      .reverse()
-      .map((d) => {
-        running += Number(d.pnl) || 0;
-        return running;
-      });
-  }, [decisions]);
-
-  if (points.length < 2) return null;
-  const min = Math.min(...points, 0),
-    max = Math.max(...points, 0);
-  const range = max - min || 1;
-  const w = 120,
-    h = 32;
-  const toX = (i) => (i / (points.length - 1)) * w;
-  const toY = (v) => h - ((v - min) / range) * h;
-  const pathD = points
-    .map(
-      (v, i) =>
-        `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`,
-    )
-    .join(" ");
-  const color = points[points.length - 1] >= 0 ? "#4ade80" : "#fb7185";
+function FieldLabel({ label, children }) {
   return (
-    <svg width={w} height={h} style={{ overflow: "visible" }}>
-      <defs>
-        <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <path d={`${pathD} L${w},${h} L0,${h} Z`} fill="url(#sparkGrad)" />
-      <path
-        d={pathD}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <circle
-        cx={toX(points.length - 1)}
-        cy={toY(points[points.length - 1])}
-        r="3"
-        fill={color}
-      />
-    </svg>
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 800,
+          textTransform: "uppercase",
+          letterSpacing: 0.9,
+          color: palette.textDim,
+        }}
+      >
+        {label}
+      </div>
+      {children}
+    </div>
   );
 }
 
@@ -1347,11 +1221,9 @@ function StatsBar({ decisions }) {
         totalTrades: 0,
         winRate: "—",
         avgRR: "—",
-        totalPnl: null,
+        totalPnl: "—",
         winCount: 0,
         lossCount: 0,
-        streak: 0,
-        streakType: "",
       };
     const closed = decisions.filter(
       (d) =>
@@ -1378,14 +1250,6 @@ function StatsBar({ decisions }) {
       : "—";
     const pnlVals = decisions.map((d) => Number(d.pnl)).filter(Number.isFinite);
     const totalPnl = pnlVals.length ? pnlVals.reduce((a, b) => a + b, 0) : null;
-    let streak = 0,
-      streakType = "";
-    for (const d of decisions) {
-      if (d.outcome !== "Win" && d.outcome !== "Loss") break;
-      if (!streakType) streakType = d.outcome;
-      if (d.outcome !== streakType) break;
-      streak++;
-    }
     return {
       totalTrades: decisions.length,
       winRate,
@@ -1393,28 +1257,19 @@ function StatsBar({ decisions }) {
       totalPnl,
       winCount: wins,
       lossCount: losses,
-      streak,
-      streakType,
     };
   }, [decisions]);
 
   const pnlPositive = stats.totalPnl != null && stats.totalPnl > 0;
   const pnlNegative = stats.totalPnl != null && stats.totalPnl < 0;
-  const streakColor =
-    stats.streakType === "Win"
-      ? palette.long
-      : stats.streakType === "Loss"
-        ? palette.short
-        : palette.textDim;
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(5,minmax(0,1fr))",
+        gridTemplateColumns: "repeat(4,minmax(0,1fr))",
         gap: 10,
       }}
-      className="llab-stats-bar"
     >
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Total Trades</div>
@@ -1433,169 +1288,23 @@ function StatsBar({ decisions }) {
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Avg Realized RR</div>
         <div style={styles.statValue}>{stats.avgRR}</div>
-        <div style={styles.statSub}>closed with exit</div>
+        <div style={styles.statSub}>all logged entries</div>
       </div>
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Total PnL</div>
         <div
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            justifyContent: "space-between",
+            ...styles.statValue,
+            color: pnlPositive
+              ? palette.long
+              : pnlNegative
+                ? palette.short
+                : palette.text,
           }}
         >
-          <div
-            style={{
-              ...styles.statValue,
-              color: pnlPositive
-                ? palette.long
-                : pnlNegative
-                  ? palette.short
-                  : palette.text,
-            }}
-          >
-            {stats.totalPnl != null ? money(stats.totalPnl) : "—"}
-          </div>
-          <PnlSparkline decisions={decisions} />
+          {stats.totalPnl != null ? money(stats.totalPnl) : "—"}
         </div>
         <div style={styles.statSub}>logged pnl only</div>
-      </div>
-      <div style={styles.statCard}>
-        <div style={styles.statLabel}>Current Streak</div>
-        <div style={{ ...styles.statValue, color: streakColor }}>
-          {stats.streak > 0
-            ? `${stats.streak}${stats.streakType === "Win" ? " 🔥" : " 📉"}`
-            : "—"}
-        </div>
-        <div style={styles.statSub}>
-          {stats.streakType || "no closed trades"}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── QuickClose ───────────────────────────────────────────────────────────────
-
-function QuickClose({ logId, onClose }) {
-  const [exit, setExit] = useState("");
-  const [pnl, setPnl] = useState("");
-  const [outcome, setOutcome] = useState("Win");
-  const [open, setOpen] = useState(false);
-
-  if (!open) {
-    return (
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen(true);
-        }}
-        type="button"
-        style={{
-          ...cardButtonReset,
-          width: "auto",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 6,
-          padding: "6px 12px",
-          borderRadius: 10,
-          border: "1px solid rgba(74,222,128,0.3)",
-          background: "rgba(74,222,128,0.07)",
-          color: palette.long,
-          fontSize: 12,
-          fontWeight: 800,
-          cursor: "pointer",
-        }}
-      >
-        ✓ Close Trade
-      </button>
-    );
-  }
-
-  return (
-    <div
-      onClick={(e) => e.stopPropagation()}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr auto auto",
-        gap: 8,
-        alignItems: "end",
-        padding: "10px 12px",
-        borderRadius: 12,
-        border: `1px solid ${palette.border}`,
-        background: "rgba(255,255,255,0.03)",
-      }}
-    >
-      <FieldLabel label="Exit Price">
-        <input
-          style={{ ...fieldStyle, fontSize: 13 }}
-          value={exit}
-          onChange={(e) => setExit(e.target.value)}
-          placeholder="e.g. 1638.50"
-        />
-      </FieldLabel>
-      <FieldLabel label="PnL ($)">
-        <input
-          style={{ ...fieldStyle, fontSize: 13 }}
-          value={pnl}
-          onChange={(e) => setPnl(e.target.value)}
-          placeholder="e.g. 142.50"
-        />
-      </FieldLabel>
-      <FieldLabel label="Outcome">
-        <select
-          style={{ ...fieldStyle, fontSize: 13 }}
-          value={outcome}
-          onChange={(e) => setOutcome(e.target.value)}
-        >
-          {["Win", "Loss", "Scratch"].map((v) => (
-            <option key={v}>{v}</option>
-          ))}
-        </select>
-      </FieldLabel>
-      <div style={{ display: "flex", gap: 6, paddingBottom: 1 }}>
-        <button
-          type="button"
-          onClick={() => {
-            if (exit || pnl)
-              onClose(
-                logId,
-                Number(exit) || null,
-                outcome,
-                Number(pnl) || null,
-              );
-            setOpen(false);
-          }}
-          style={{
-            border: "none",
-            borderRadius: 10,
-            padding: "9px 14px",
-            background: "linear-gradient(135deg,#22c55e,#16a34a)",
-            color: "#fff",
-            fontWeight: 900,
-            cursor: "pointer",
-            fontSize: 12,
-          }}
-        >
-          Save
-        </button>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          style={{
-            border: `1px solid ${palette.border}`,
-            borderRadius: 10,
-            padding: "9px 12px",
-            background: "rgba(255,255,255,0.04)",
-            color: palette.textSoft,
-            fontWeight: 800,
-            cursor: "pointer",
-            fontSize: 12,
-          }}
-        >
-          ✕
-        </button>
       </div>
     </div>
   );
@@ -1927,6 +1636,7 @@ export default function AppPreBeta() {
   });
   const [featureFlags, setFeatureFlags] = useState(DEFAULT_FEATURE_FLAGS);
   const [chartReloadKey, setChartReloadKey] = useState(0);
+  const [chartEvent, setChartEvent] = useState(null);
   const chartTimeoutRef = useRef(null);
   const isMountedRef = useRef(true);
 
@@ -2146,15 +1856,15 @@ export default function AppPreBeta() {
     return map[timeframe] || "3";
   }
 
-  // Use selectedEvent directly — no stale chartEvent state (BUG FIX)
+  const chartBaseEvent = chartEvent || selectedEvent;
   const chartPair =
     logMode === "manual"
       ? decisionForm.pair || "BTC/USDT"
-      : selectedEvent?.pair || "BTC/USDT";
+      : chartBaseEvent?.pair || "BTC/USDT";
   const activeTimeframe =
     logMode === "manual"
       ? decisionForm.timeframe || "3m"
-      : selectedEvent?.timeframe || decisionForm.timeframe || "3m";
+      : chartBaseEvent?.timeframe || decisionForm.timeframe || "3m";
   const chartSymbol = getTradingViewSymbol(chartPair);
   const chartInterval = getTradingViewInterval(activeTimeframe);
   const basePair = chartPair.replace(":USDT", "").replace("/", "");
@@ -2168,14 +1878,13 @@ export default function AppPreBeta() {
     tradingView: `https://www.tradingview.com/chart/?symbol=BINANCE:${basePair}`,
   };
 
-  // chartSrc memo now depends on chartSymbol + chartInterval so it rebuilds on pair change (BUG FIX)
   const chartSrc = useMemo(
     () =>
       "https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart" +
       `&symbol=${encodeURIComponent(chartSymbol)}` +
       `&interval=${encodeURIComponent(chartInterval)}` +
       "&hidesidetoolbar=1&symboledit=1&saveimage=0&toolbarbg=F1F3F6&studies=[]&theme=dark&style=1&timezone=Etc%2FUTC&withdateranges=1",
-    [chartSymbol, chartInterval, chartReloadKey],
+    [chartReloadKey],
   );
 
   const waves = useMemo(() => groupWaves(events), [events]);
@@ -2307,24 +2016,17 @@ export default function AppPreBeta() {
       decisionForm.exit,
     ],
   );
-  // BUG FIX: use selectedEvent RR values as fallback when form values don't calc cleanly
   const decisionPlannedRR = useMemo(
     () =>
       calcPlannedRR(
-        Number(decisionForm.entry) || null,
-        Number(decisionForm.stop) || null,
-        Number(decisionForm.tp1) || null,
-        Number(decisionForm.tp2) || null,
-        selectedEvent?.rr1,
-        selectedEvent?.rr2,
+        decisionForm.entry,
+        decisionForm.stop,
+        decisionForm.tp1,
+        decisionForm.tp2,
+        null,
+        null,
       ),
-    [
-      decisionForm.entry,
-      decisionForm.stop,
-      decisionForm.tp1,
-      decisionForm.tp2,
-      selectedEvent,
-    ],
+    [decisionForm.entry, decisionForm.stop, decisionForm.tp1, decisionForm.tp2],
   );
   const decisionRiskAmount = useMemo(
     () => calcRiskAmount(decisionForm.entry, decisionForm.stop),
@@ -2365,12 +2067,11 @@ export default function AppPreBeta() {
     reader.readAsDataURL(file);
   }
 
-  // BUG FIX: selectWaveHead bumps chartReloadKey to force iframe remount with correct symbol
   function selectWaveHead(wave) {
     const head = wave?.events?.[0];
     if (head) {
       setSelectedEvent(head);
-      setChartReloadKey((k) => k + 1);
+      setChartEvent(head);
     }
   }
 
@@ -2683,7 +2384,8 @@ export default function AppPreBeta() {
       "success",
     );
 
-    // Reset volatile fields, keep context
+    // Reset volatile fields after save — keep context fields (pair, timeframe, direction, session)
+    // so user can immediately log another trade on the same setup
     setDecisionForm((prev) => ({
       ...prev,
       entry: logMode === "event" ? prev.entry : "",
@@ -2709,6 +2411,8 @@ export default function AppPreBeta() {
   const displayDecisions = showInsights
     ? loggedDecisions
     : loggedDecisions.slice(0, 5);
+
+  // ─── Login screen ───────────────────────────────────────────────────────────
 
   if (!isAuthenticated) {
     return (
@@ -2795,17 +2499,18 @@ export default function AppPreBeta() {
   if (activeTab === "billing") {
     return (
       <div style={styles.app}>
-        <div style={styles.shell} className="llab-shell">
+        <div style={styles.shell}>
           <BillingPage token={getStoredToken()} compact={false} />
         </div>
       </div>
     );
   }
 
+  // ─── Main dashboard ─────────────────────────────────────────────────────────
+
   return (
     <div style={styles.app}>
-      <MobileStyles />
-      <div style={styles.shell} className="llab-shell">
+      <div style={styles.shell}>
         {/* TOP BAR */}
         <div style={styles.topbar}>
           <div style={styles.topbarRow}>
@@ -2822,10 +2527,7 @@ export default function AppPreBeta() {
                 >
                   Red October Systems
                 </div>
-                <div
-                  style={{ fontSize: 24, fontWeight: 900 }}
-                  className="llab-brand-title"
-                >
+                <div style={{ fontSize: 24, fontWeight: 900 }}>
                   Liquidity Lab
                 </div>
               </div>
@@ -2837,7 +2539,6 @@ export default function AppPreBeta() {
                 flexWrap: "wrap",
                 alignItems: "center",
               }}
-              className="llab-topbar-buttons"
             >
               <Pill tone={propStatus.tone}>{propStatus.status}</Pill>
               <Pill tone="neutral">
@@ -2887,23 +2588,23 @@ export default function AppPreBeta() {
           </div>
         </div>
 
-        {/* TICKER — bumps chartReloadKey on select (BUG FIX) */}
+        {/* TICKER */}
         <SmartTicker
           items={tickerItems}
           onSelect={(item) => {
             if (item?._wave) selectWaveHead(item._wave);
-            else {
-              setSelectedEvent(item);
-              setChartReloadKey((k) => k + 1);
-            }
+            else setSelectedEvent(item);
           }}
         />
 
+        {/* SESSION CLOCKS */}
         <SessionClockWidget />
+
+        {/* STATS BAR */}
         <StatsBar decisions={loggedDecisions} />
 
         {/* MAIN GRID */}
-        <div style={styles.mainGrid} className="llab-main-grid">
+        <div style={styles.mainGrid}>
           {/* LEFT: RADAR */}
           <div
             style={{
@@ -2914,7 +2615,6 @@ export default function AppPreBeta() {
               flexDirection: "column",
               overflow: "hidden",
             }}
-            className="llab-radar-panel"
           >
             <div style={styles.panelHeader}>
               <div>
@@ -2941,13 +2641,6 @@ export default function AppPreBeta() {
                       : state === "AGING"
                         ? palette.gold
                         : palette.short;
-                  const isSelected =
-                    selectedEvent &&
-                    wave.events?.some(
-                      (e) =>
-                        e.pair === selectedEvent.pair &&
-                        e.directionBias === selectedEvent.directionBias,
-                    );
                   return (
                     <div
                       key={wave.key}
@@ -2957,11 +2650,8 @@ export default function AppPreBeta() {
                       style={{
                         ...styles.waveCard,
                         borderLeft: `3px solid ${tone === "long" ? palette.long : palette.short}`,
-                        background: isSelected
-                          ? tone === "long"
-                            ? "rgba(74,222,128,0.1)"
-                            : "rgba(251,113,133,0.1)"
-                          : hoveredWave === wave.key
+                        background:
+                          hoveredWave === wave.key
                             ? tone === "long"
                               ? "rgba(74,222,128,0.06)"
                               : "rgba(251,113,133,0.06)"
@@ -2970,11 +2660,12 @@ export default function AppPreBeta() {
                           hoveredWave === wave.key
                             ? "translateX(2px)"
                             : "translateX(0)",
-                        boxShadow: isSelected
-                          ? tone === "long"
-                            ? "inset 0 0 0 1px rgba(74,222,128,0.3)"
-                            : "inset 0 0 0 1px rgba(251,113,133,0.3)"
-                          : "none",
+                        borderColor:
+                          hoveredWave === wave.key
+                            ? tone === "long"
+                              ? "rgba(74,222,128,0.22)"
+                              : "rgba(251,113,133,0.22)"
+                            : palette.border,
                       }}
                     >
                       <div
@@ -3105,6 +2796,7 @@ export default function AppPreBeta() {
               alignSelf: "stretch",
             }}
           >
+            {/* Chart — fills remaining height, exchange links float over bottom */}
             <div
               style={{
                 ...styles.chartFrame,
@@ -3112,7 +2804,6 @@ export default function AppPreBeta() {
                 minHeight: 380,
                 position: "relative",
               }}
-              className="llab-chart-frame"
             >
               {selectedEvent?.chartCandles?.length ? (
                 <LightweightExecutionChart event={selectedEvent} />
@@ -3172,64 +2863,13 @@ export default function AppPreBeta() {
               </div>
             </div>
 
-            {/* Signal bar — shows placeholder when no event */}
-            {selectedEvent ? (
+            {/* Signal insight bar — only renders when a live event is selected */}
+            {selectedEvent && (
               <SignalInsightBar
                 event={selectedEvent}
                 rr={selectedEventRR}
                 risk={decisionRiskAmount}
               />
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(7,minmax(0,1fr))",
-                  gap: 6,
-                }}
-              >
-                {[
-                  "ENTRY",
-                  "STOP",
-                  "TP1",
-                  "TP2",
-                  "STATE",
-                  "LIVE TTL",
-                  "SESSION",
-                ].map((label) => (
-                  <div
-                    key={label}
-                    style={{
-                      background: "rgba(255,255,255,0.02)",
-                      border: `1px solid ${palette.borderSoft}`,
-                      borderRadius: 12,
-                      padding: "8px 10px",
-                      display: "grid",
-                      gap: 3,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 9,
-                        color: palette.textDim,
-                        textTransform: "uppercase",
-                        letterSpacing: 1,
-                        fontWeight: 800,
-                      }}
-                    >
-                      {label}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: "rgba(255,255,255,0.15)",
-                      }}
-                    >
-                      —
-                    </div>
-                  </div>
-                ))}
-              </div>
             )}
           </div>
 
@@ -3242,7 +2882,6 @@ export default function AppPreBeta() {
               flexDirection: "column",
               overflow: "hidden",
             }}
-            className="llab-right-panel"
           >
             <div style={styles.panelHeader}>
               <div>
@@ -3267,6 +2906,7 @@ export default function AppPreBeta() {
                 alignContent: "start",
               }}
             >
+              {/* Pair + Confidence */}
               <div
                 style={{
                   display: "grid",
@@ -3281,6 +2921,8 @@ export default function AppPreBeta() {
                   subtext={selectedEvent?.sweepType || "—"}
                 />
               </div>
+
+              {/* Confidence bar */}
               <div
                 style={{
                   padding: "10px 12px",
@@ -3329,6 +2971,8 @@ export default function AppPreBeta() {
                   />
                 </div>
               </div>
+
+              {/* Pattern + State */}
               <div
                 style={{
                   display: "grid",
@@ -3352,8 +2996,11 @@ export default function AppPreBeta() {
                   }
                 />
               </div>
+
               <Divider />
               <SectionLabel>Prop Challenge</SectionLabel>
+
+              {/* Firm selector */}
               <div style={{ display: "grid", gap: 6 }}>
                 <FieldLabel label="Firm / Preset">
                   <select
@@ -3373,6 +3020,7 @@ export default function AppPreBeta() {
                     ))}
                   </select>
                 </FieldLabel>
+
                 {activePreset.id !== "none" && (
                   <div
                     style={{
@@ -3426,6 +3074,8 @@ export default function AppPreBeta() {
                   </div>
                 )}
               </div>
+
+              {/* Prop rule numbers */}
               {activePreset.id !== "none" && (
                 <>
                   <div
@@ -3435,46 +3085,98 @@ export default function AppPreBeta() {
                       gap: 6,
                     }}
                   >
-                    {[
-                      [
-                        "Daily Limit",
-                        money(propStatus.dailyLoss),
-                        propStatus.tone === "short"
-                          ? palette.short
-                          : propStatus.tone === "gold"
-                            ? palette.gold
-                            : palette.text,
-                      ],
-                      ["Drawdown", money(propStatus.maxDrawdown), palette.text],
-                      ["Target", money(propStatus.target), palette.long],
-                    ].map(([label, val, color]) => (
+                    <div
+                      style={{
+                        border: `1px solid ${palette.borderSoft}`,
+                        borderRadius: 10,
+                        padding: "8px 10px",
+                        display: "grid",
+                        gap: 3,
+                      }}
+                    >
                       <div
-                        key={label}
                         style={{
-                          border: `1px solid ${palette.borderSoft}`,
-                          borderRadius: 10,
-                          padding: "8px 10px",
-                          display: "grid",
-                          gap: 3,
+                          fontSize: 9,
+                          color: palette.textDim,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.8,
+                          fontWeight: 800,
                         }}
                       >
-                        <div
-                          style={{
-                            fontSize: 9,
-                            color: palette.textDim,
-                            textTransform: "uppercase",
-                            letterSpacing: 0.8,
-                            fontWeight: 800,
-                          }}
-                        >
-                          {label}
-                        </div>
-                        <div style={{ fontSize: 13, fontWeight: 900, color }}>
-                          {val}
-                        </div>
+                        Daily Limit
                       </div>
-                    ))}
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 900,
+                          color:
+                            propStatus.tone === "short"
+                              ? palette.short
+                              : propStatus.tone === "gold"
+                                ? palette.gold
+                                : palette.text,
+                        }}
+                      >
+                        {money(propStatus.dailyLoss)}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        border: `1px solid ${palette.borderSoft}`,
+                        borderRadius: 10,
+                        padding: "8px 10px",
+                        display: "grid",
+                        gap: 3,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 9,
+                          color: palette.textDim,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.8,
+                          fontWeight: 800,
+                        }}
+                      >
+                        Drawdown
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 900 }}>
+                        {money(propStatus.maxDrawdown)}
+                      </div>
+                    </div>
+                    <div
+                      style={{
+                        border: `1px solid ${palette.borderSoft}`,
+                        borderRadius: 10,
+                        padding: "8px 10px",
+                        display: "grid",
+                        gap: 3,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 9,
+                          color: palette.textDim,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.8,
+                          fontWeight: 800,
+                        }}
+                      >
+                        Target
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 900,
+                          color: palette.long,
+                        }}
+                      >
+                        {money(propStatus.target)}
+                      </div>
+                    </div>
                   </div>
+
+                  {/* Daily limit usage bar */}
                   {decisionRiskAmount &&
                     propStatus.dailyLoss > 0 &&
                     (() => {
@@ -3548,8 +3250,10 @@ export default function AppPreBeta() {
                     })()}
                 </>
               )}
+
               <Divider />
               <SectionLabel>Execution Note</SectionLabel>
+
               <div
                 style={{
                   padding: "9px 11px",
@@ -3565,6 +3269,7 @@ export default function AppPreBeta() {
                 {selectedEvent?.session || "—"} ·{" "}
                 {selectedEvent?.emaContext || "No EMA context"}
               </div>
+
               {selectedEvent?.currentPrice && (
                 <MiniBox
                   label="Current Price"
@@ -3576,7 +3281,7 @@ export default function AppPreBeta() {
           </div>
         </div>
 
-        {/* JOURNAL */}
+        {/* JOURNAL HEADER */}
         <div style={{ ...styles.journalShell }}>
           <div style={styles.journalHeader}>
             <div>
@@ -3625,13 +3330,14 @@ export default function AppPreBeta() {
             </div>
           </div>
 
+          {/* RR summary row */}
           <div
             style={{
               padding: "12px 14px",
               borderBottom: `1px solid ${palette.borderSoft}`,
             }}
           >
-            <div style={styles.topCardRow} className="llab-top-card-row">
+            <div style={styles.topCardRow}>
               <MiniBox
                 label="Planned RR1"
                 value={rrText(decisionPlannedRR.rr1)}
@@ -3666,6 +3372,7 @@ export default function AppPreBeta() {
             </div>
           </div>
 
+          {/* Form */}
           <div style={{ padding: "14px 14px 18px" }}>
             <SectionLabel>Event Context</SectionLabel>
             <div
@@ -3675,7 +3382,6 @@ export default function AppPreBeta() {
                 gap: 10,
                 marginBottom: 16,
               }}
-              className="llab-form-4col"
             >
               <FieldLabel label="Pair">
                 <input
@@ -3735,7 +3441,6 @@ export default function AppPreBeta() {
                 gap: 10,
                 marginBottom: 16,
               }}
-              className="llab-form-4col"
             >
               <FieldLabel label="Sweep Type">
                 <select
@@ -3859,7 +3564,6 @@ export default function AppPreBeta() {
                 gap: 10,
                 marginBottom: 8,
               }}
-              className="llab-form-4col"
             >
               <FieldLabel label="Entry">
                 <input
@@ -3913,7 +3617,6 @@ export default function AppPreBeta() {
                 gap: 10,
                 marginBottom: 16,
               }}
-              className="llab-price-levels"
             >
               <FieldLabel label="Exit Price">
                 <input
@@ -3940,7 +3643,6 @@ export default function AppPreBeta() {
                 gap: 10,
                 marginBottom: 8,
               }}
-              className="llab-form-4col"
             >
               <FieldLabel label="Outcome">
                 <select
@@ -4000,7 +3702,6 @@ export default function AppPreBeta() {
                 gap: 10,
                 marginBottom: 16,
               }}
-              className="llab-form-3col"
             >
               <FieldLabel label="Setup Quality (1–10)">
                 <input
@@ -4091,7 +3792,7 @@ export default function AppPreBeta() {
           </div>
         </div>
 
-        {/* RECENT ENTRIES */}
+        {/* RECENT JOURNAL ENTRIES */}
         <div style={{ ...styles.journalShell }}>
           <div style={styles.journalHeader}>
             <div>
@@ -4108,6 +3809,7 @@ export default function AppPreBeta() {
               {showInsights ? "Show Less" : "Show All"}
             </button>
           </div>
+
           <div style={{ padding: 12, display: "grid", gap: 8 }}>
             {displayDecisions.length ? (
               displayDecisions.map((log) => {
@@ -4173,33 +3875,9 @@ export default function AppPreBeta() {
                             </Pill>
                           )}
                         </div>
-                        <div
-                          style={{
-                            color: palette.textSoft,
-                            fontSize: 12,
-                            display: "flex",
-                            gap: 6,
-                            alignItems: "center",
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <span
-                            style={{
-                              padding: "2px 7px",
-                              borderRadius: 6,
-                              background: "rgba(255,255,255,0.05)",
-                              border: `1px solid ${palette.borderSoft}`,
-                              fontSize: 11,
-                              fontWeight: 700,
-                              color: palette.textDim,
-                            }}
-                          >
-                            {log.eventType}
-                          </span>
-                          <span style={{ opacity: 0.5 }}>·</span>
-                          <span>{log.sweepType}</span>
-                          <span style={{ opacity: 0.5 }}>·</span>
-                          <span>{formatDateTime(log.timestamp)}</span>
+                        <div style={{ color: palette.textSoft, fontSize: 12 }}>
+                          {log.eventType} · {log.sweepType} ·{" "}
+                          {formatDateTime(log.timestamp)}
                         </div>
                       </div>
                       <div
@@ -4233,6 +3911,7 @@ export default function AppPreBeta() {
                         )}
                       </div>
                     </div>
+
                     {isExpanded && (
                       <div
                         style={{
@@ -4242,10 +3921,7 @@ export default function AppPreBeta() {
                           borderTop: `1px solid ${palette.borderSoft}`,
                         }}
                       >
-                        <div
-                          style={styles.topCardRow}
-                          className="llab-top-card-row"
-                        >
+                        <div style={styles.topCardRow}>
                           <MiniBox
                             label="Entry / Stop"
                             value={`${num(log.entry)} / ${num(log.stop)}`}
@@ -4295,35 +3971,6 @@ export default function AppPreBeta() {
                           >
                             {log.notes}
                           </div>
-                        )}
-                        {(log.outcome === "Open" || !log.outcome) && (
-                          <QuickClose
-                            logId={log.id}
-                            onClose={(id, exit, outcome, pnl) => {
-                              setLoggedDecisions((prev) =>
-                                prev.map((d) =>
-                                  d.id === id
-                                    ? {
-                                        ...d,
-                                        exit,
-                                        outcome,
-                                        pnl,
-                                        realizedRR: calcRealizedRR(
-                                          d.directionBias,
-                                          d.entry,
-                                          d.stop,
-                                          exit,
-                                        ),
-                                      }
-                                    : d,
-                                ),
-                              );
-                              toast(
-                                `${log.pair} closed as ${outcome}`,
-                                "success",
-                              );
-                            }}
-                          />
                         )}
                       </div>
                     )}

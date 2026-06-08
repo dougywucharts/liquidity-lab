@@ -1,17 +1,22 @@
-# PATCHED: feed bridge + deprecation + signal ignition adjustments
 # =========================================================
-# Pro-Level Sweep Hunter v41.3 RADAR BRIDGE + TUNED RULES
-#  - Multi-timeframe sweep model
-#  - 5m liquidity map
-#  - 3m setup / sweep detection
-#  - 1m trigger / reclaim / acceptance / confirm
-#  - RR calculator
-#  - Double sweep tagging
-#  - Equal High / Equal Low liquidity pool labeling
-#  - Expanded CSV logging
-#  - Debug heartbeat / cycle timing
-#  - Radar bridge POST integration
-#  - Wider radar ignition so UI stays alive
+# Pro-Level Sweep Hunter v42.0 — NOISE FILTERED
+# =========================================================
+#  Changelog from v41.3:
+#  [FILTER 1] VOL_MULT_DETECT: 0.30 → 0.80 (hard volume floor)
+#  [FILTER 2] VOL_MULT_CONFIRM: 0.70 → 1.10 (above-avg required)
+#  [FILTER 3] MIN_SETUP_STRENGTH: 5 → 38
+#  [FILTER 4] WICK_PCT_MIN: 0.10 → 0.25
+#  [FILTER 5] REJECT_WICK_PCT_MIN: 0.12 → 0.20
+#  [FILTER 6] MAP_EQ_MIN_TOUCHES: 2 → 3 + clustering check
+#  [FILTER 7] DETECTED_COOLDOWN: 30 → 240s + level-reset guard
+#  [FILTER 8] Bias alignment gate (counter-trend needs strength ≥ 65)
+#  [FILTER 9] Off-hours gate (DETECTED skipped unless strength ≥ 60)
+#  [FILTER 10] Reclaim staleness check (max 15 min after sweep)
+#  [FILTER 11] Accepted requires 2 consecutive closes beyond level
+#  [FILTER 12] Confirmed requires 0.5× ATR clearance past entry
+#  [FILTER 13] classify_time_window fully rebuilt (Asia/London/NY)
+#  [FILTER 14] compute_institutional_score: session + pool bonuses
+#  [FILTER 15] sweep_ts tracked in last_sweep_meta for reclaim gate
 # =========================================================
 
 import os
@@ -33,14 +38,12 @@ pd.set_option("mode.chained_assignment", None)
 
 WEBHOOK_URL = ""  # Discord disabled; radar bridge only
 
-
 USE_PROD_RADAR = True
 
 BRIDGE_URLS = [
-    "http://localhost:5000/sweep",  # local test
-    "https://liquidity-lab-api.onrender.com/sweep",  # live
+    "http://localhost:5000/sweep",
+    "https://liquidity-lab-api.onrender.com/sweep",
 ]
-
 
 ENABLE_RADAR_POST = True
 BRIDGE_TIMEOUT = 8
@@ -64,19 +67,28 @@ SETUP_LOOKBACK = 8
 SETUP_SWING_BACK = 3
 MAP_EQ_LOOKBACK = 18
 MAP_EQ_TOL_PCT = 0.0015
-MAP_EQ_MIN_TOUCHES = 2
+MAP_EQ_MIN_TOUCHES = 3  # [FILTER 6] was 2
 
-# Detection thresholds (wider radar ignition)
-VOL_MULT_DETECT = 0.30
-VOL_MULT_CONFIRM = 0.70
-RANGE_MULT_DETECT = 0.10
-RANGE_MULT_CONFIRM = 0.20
-WICK_PCT_MIN = 0.10
-REJECT_WICK_PCT_MIN = 0.12
+# Detection thresholds — tightened for quality signals
+VOL_MULT_DETECT = 0.80  # [FILTER 1] was 0.30
+VOL_MULT_CONFIRM = 1.10  # [FILTER 2] was 0.70
+RANGE_MULT_DETECT = 0.18  # was 0.10
+RANGE_MULT_CONFIRM = 0.25  # was 0.20
+WICK_PCT_MIN = 0.25  # [FILTER 4] was 0.10
+REJECT_WICK_PCT_MIN = 0.20  # [FILTER 5] was 0.12
 WICK_PRICE_MIN = 0.0025
 SFP_PENETRATION_MIN = 0.0005
 CONFIRM_MAX_BARS = 3
-MIN_SETUP_STRENGTH = 5
+MIN_SETUP_STRENGTH = 38  # [FILTER 3] was 5
+
+# Bias alignment gate
+COUNTER_TREND_MIN_STRENGTH = 65  # [FILTER 8] counter-trend sweeps need this
+
+# Reclaim staleness
+RECLAIM_MAX_AGE_MINUTES = 15  # [FILTER 10] reclaims older than this are stale
+
+# Off-hours gate
+OFF_HOURS_MIN_STRENGTH = 60  # [FILTER 9] DETECTED skipped below this off-hours
 
 # RR settings
 STOP_BUFFER_PCT = 0.0015
@@ -84,11 +96,11 @@ TP1_BUFFER_PCT = 0.0005
 TP2_BUFFER_PCT = 0.0010
 MIN_RR_TO_ALERT = 0.0
 
-# Cooldowns (tuned)
-DETECTED_COOLDOWN = 30
-RECLAIM_COOLDOWN = 30
-ACCEPTED_COOLDOWN = 30
-CONFIRMED_COOLDOWN = 30
+# Cooldowns
+DETECTED_COOLDOWN = 240  # [FILTER 7] was 30
+RECLAIM_COOLDOWN = 45  # was 30
+ACCEPTED_COOLDOWN = 45  # was 30
+CONFIRMED_COOLDOWN = 45  # was 30
 DOUBLE_SWEEP_COOLDOWN = 240
 PING_COOLDOWN = 120
 
@@ -218,15 +230,38 @@ def strength_label(score: int) -> str:
     return "Light"
 
 
+# =========================================================
+# SESSION / TIME WINDOW  [FILTER 13]
+# =========================================================
+
+# Properly covers Asia, London, NY with named opens
+SESSION_WINDOWS = [
+    ("Asia Open", 22, 24),
+    ("Asia", 0, 2),
+    ("London Open", 7, 9),
+    ("London", 9, 12),
+    ("NY Open", 13, 15),
+    ("NY", 15, 17),
+    ("NY Close", 20, 22),
+]
+
+PRIME_SESSIONS = {"Asia Open", "London Open", "NY Open"}
+
+
 def classify_time_window(ts_utc: pd.Timestamp) -> str:
     hour = ts_utc.hour
-    if hour in [0, 1, 7, 8, 13, 14]:
-        return "Session Open"
-    elif hour in [4, 5, 10, 11, 16, 17]:
-        return "Midday"
-    elif hour in [6, 12, 18, 19, 20]:
-        return "Session Close"
+    for name, start, end in SESSION_WINDOWS:
+        if start <= hour < end:
+            return name
     return "Off-Hours"
+
+
+def is_off_hours(ts_utc: pd.Timestamp) -> bool:
+    return classify_time_window(ts_utc) == "Off-Hours"
+
+
+def is_prime_session(ts_utc: pd.Timestamp) -> bool:
+    return classify_time_window(ts_utc) in PRIME_SESSIONS
 
 
 def log_sweep_event(
@@ -431,11 +466,15 @@ def compute_regime_and_bias(df):
 
 
 # =========================================================
-# LIQUIDITY POOLS
+# LIQUIDITY POOLS  [FILTER 6]
 # =========================================================
 
 
 def detect_equal_highs_lows(map_df, level, direction, price):
+    """
+    Upgraded: requires MAP_EQ_MIN_TOUCHES=3 AND at least two of those
+    touches must be within 10 bars of each other (clustering check).
+    """
     if map_df is None or len(map_df) < 3 or level is None:
         return "Low Sweep" if direction == "bullish" else "High Sweep"
 
@@ -443,12 +482,25 @@ def detect_equal_highs_lows(map_df, level, direction, price):
     tol = price * MAP_EQ_TOL_PCT
 
     if direction == "bearish":
-        touches = (look["high"] - level).abs() <= tol
-        return "Equal Highs" if touches.sum() >= MAP_EQ_MIN_TOUCHES else "High Sweep"
+        touch_idx = [
+            i for i, h in enumerate(look["high"].values) if abs(float(h) - level) <= tol
+        ]
+        if len(touch_idx) >= MAP_EQ_MIN_TOUCHES:
+            # Clustering: at least two touches within 10 bars
+            for j in range(len(touch_idx) - 1):
+                if touch_idx[j + 1] - touch_idx[j] <= 10:
+                    return "Equal Highs"
+        return "High Sweep"
 
     if direction == "bullish":
-        touches = (look["low"] - level).abs() <= tol
-        return "Equal Lows" if touches.sum() >= MAP_EQ_MIN_TOUCHES else "Low Sweep"
+        touch_idx = [
+            i for i, l in enumerate(look["low"].values) if abs(float(l) - level) <= tol
+        ]
+        if len(touch_idx) >= MAP_EQ_MIN_TOUCHES:
+            for j in range(len(touch_idx) - 1):
+                if touch_idx[j + 1] - touch_idx[j] <= 10:
+                    return "Equal Lows"
+        return "Low Sweep"
 
     return "Swing Level"
 
@@ -461,13 +513,29 @@ def get_map_liquidity_levels(map_df):
     if look.empty:
         return None
 
-    high_level = look["high"].max()
-    low_level = look["low"].min()
-
     return {
-        "high": high_level,
-        "low": low_level,
+        "high": look["high"].max(),
+        "low": look["low"].min(),
     }
+
+
+# =========================================================
+# BIAS ALIGNMENT HELPER  [FILTER 8]
+# =========================================================
+
+
+def is_aligned_with_bias(sweep_dir: str, bias: str) -> bool:
+    """
+    Aligned = sweep direction agrees with HTF EMA structure.
+    Neutral bias = no penalty (ranging market, both directions valid).
+    """
+    if bias == "Neutral":
+        return True
+    if sweep_dir == "bearish" and bias == "Bearish":
+        return True
+    if sweep_dir == "bullish" and bias == "Bullish":
+        return True
+    return False
 
 
 # =========================================================
@@ -512,26 +580,17 @@ def build_rr_plan(direction, trigger_df, map_levels, sweep_level, reclaim_level=
     if direction == "bullish":
         entry = base_level + retest_offset
         stop = base_level - buffer
-
-        # Scalp targets: nearby local range, not far HTF map
         tp1 = local_high * (1 - TP1_BUFFER_PCT)
         tp2 = local_high * (1 + TP2_BUFFER_PCT)
-
-        # fallback if target is invalid
         if tp1 <= entry:
             tp1 = entry + (entry - stop) * 1.25
         if tp2 <= tp1:
             tp2 = entry + (entry - stop) * 2.0
-
     else:
         entry = base_level - retest_offset
         stop = base_level + buffer
-
-        # Scalp targets: nearby local range, not far HTF map
         tp1 = local_low * (1 + TP1_BUFFER_PCT)
         tp2 = local_low * (1 - TP2_BUFFER_PCT)
-
-        # fallback if target is invalid
         if tp1 >= entry:
             tp1 = entry - (stop - entry) * 1.25
         if tp2 >= tp1:
@@ -588,14 +647,27 @@ def classify_variant(current_dir, current_level, current_ts, prev_meta):
 
 
 # =========================================================
-# DETECT SETUP SWEEP (3m)
+# DETECT SETUP SWEEP (3m)  [FILTERS 1-9]
 # =========================================================
 
 
 def detect_setup_sweep(setup_df, map_df):
+    """
+    Fully filtered sweep detection.
+    Gates applied in order:
+      1. Candle range >= RANGE_MULT_DETECT × ATR
+      2. Volume >= VOL_MULT_DETECT × 10-bar avg  (hard gate, no exceptions)
+      3. Directional close required
+      4. Strength scoring with raised wick threshold
+      5. Minimum strength = 38
+      6. Bias alignment: counter-trend needs strength >= 65, then penalised
+      7. Off-hours: skipped unless strength >= OFF_HOURS_MIN_STRENGTH
+    """
+    FAIL = (False, None, 0, None, None, "normal", None)
+
     needed = SETUP_LOOKBACK + SETUP_SWING_BACK + 10
     if len(setup_df) < needed:
-        return False, None, 0, None, None, "normal", None
+        return FAIL
 
     struct = setup_df.iloc[-(SETUP_LOOKBACK + SETUP_SWING_BACK) : -SETUP_SWING_BACK]
     c = setup_df.iloc[-1]
@@ -607,26 +679,38 @@ def detect_setup_sweep(setup_df, map_df):
     c_range = c["high"] - c["low"]
 
     if pd.isna(avg_range) or c_range <= 0:
-        return False, None, 0, None, None, "normal", None
+        return FAIL
 
-    mid = (c["high"] + c["low"]) / 2
+    # Gate 1: Candle range
+    if c_range < avg_range * RANGE_MULT_DETECT:
+        return FAIL
 
+    # Gate 2: Volume — hard floor, no exceptions
+    vol_avg10 = setup_df["volume"].rolling(10).mean().iloc[-2]
+    if pd.isna(vol_avg10) or vol_avg10 <= 0:
+        return FAIL
+
+    vol_mult = c["volume"] / vol_avg10
+    if vol_mult < VOL_MULT_DETECT:
+        return FAIL
+
+    # Gate 3: Directional close
     bullish = c["low"] < range_low and c["close"] > c["open"]
-
     bearish = c["high"] > range_high and c["close"] < c["open"]
 
     if not bullish and not bearish:
-        return False, None, 0, None, None, "normal", None
+        return FAIL
 
     direction = "bullish" if bullish else "bearish"
     price = c["close"]
-    strength = 25
 
-    vol_avg10 = setup_df["volume"].rolling(10).mean().iloc[-2]
-    if not pd.isna(vol_avg10) and vol_avg10 > 0:
-        v_mult = c["volume"] / vol_avg10
-        strength += min(20, max(0, (v_mult - VOL_MULT_DETECT) * 15))
+    # Strength scoring
+    strength = 28  # base (higher than before since volume already gated)
 
+    # Volume bonus — meaningful now that floor is at 0.80
+    strength += min(22, max(0, (vol_mult - VOL_MULT_DETECT) * 18))
+
+    # Depth bonus
     if bullish:
         depth = (range_low - c["low"]) / (price + 1e-9)
         setup_level = range_low
@@ -634,8 +718,9 @@ def detect_setup_sweep(setup_df, map_df):
         depth = (c["high"] - range_high) / (price + 1e-9)
         setup_level = range_high
 
-    strength += int(depth * 6000)
+    strength += int(depth * 5000)
 
+    # Wick dominance — raised threshold [FILTER 4]
     wick_up = c["high"] - max(c["open"], c["close"])
     wick_dn = min(c["open"], c["close"]) - c["low"]
     wick_dom = max(wick_up, wick_dn) / (c_range + 1e-9)
@@ -645,14 +730,15 @@ def detect_setup_sweep(setup_df, map_df):
     elif bearish and wick_up > wick_dn:
         strength += 10
 
-    if wick_dom >= WICK_PCT_MIN:
+    if wick_dom >= WICK_PCT_MIN:  # 0.25 — meaningful only
+        strength += 8
+
+    # Range bonus
+    if c_range >= avg_range * RANGE_MULT_CONFIRM:
         strength += 6
 
-    if c_range >= avg_range * RANGE_MULT_DETECT:
-        strength += 6
-
+    # Liquidity pool classification
     map_levels = get_map_liquidity_levels(map_df)
-    map_level = None
     liquidity_type = "Swing Level"
 
     if bullish:
@@ -662,10 +748,29 @@ def detect_setup_sweep(setup_df, map_df):
         map_level = map_levels["high"] if map_levels else setup_level
         liquidity_type = detect_equal_highs_lows(map_df, map_level, direction, price)
 
+    # Named pool bonus — more reliable targets
+    if liquidity_type in ("Equal Highs", "Equal Lows"):
+        strength += 10
+
     strength = int(min(max(strength, 0), 100))
 
+    # Gate 4: Minimum strength [FILTER 3]
     if strength < MIN_SETUP_STRENGTH:
-        return False, None, 0, None, None, "normal", None
+        return FAIL
+
+    # Gate 5: Bias alignment [FILTER 8]
+    _, bias = compute_regime_and_bias(setup_df)
+
+    if not is_aligned_with_bias(direction, bias):
+        if strength < COUNTER_TREND_MIN_STRENGTH:
+            return FAIL
+        # Counter-trend that passes: apply confidence penalty
+        strength = int(strength * 0.85)
+
+    # Gate 6: Off-hours filter [FILTER 9]
+    ts = setup_df.index[-1]
+    if is_off_hours(ts) and strength < OFF_HOURS_MIN_STRENGTH:
+        return FAIL
 
     return (
         True,
@@ -679,13 +784,30 @@ def detect_setup_sweep(setup_df, map_df):
 
 
 # =========================================================
-# TRIGGER LOGIC (1m)
+# TRIGGER LOGIC (1m)  [FILTERS 10, 11]
 # =========================================================
 
 
-def detect_reclaim_or_acceptance(trigger_df, direction, sweep_level):
+def detect_reclaim_or_acceptance(
+    trigger_df, direction, sweep_level, sweep_timestamp=None
+):
+    """
+    Upgraded:
+      - Staleness gate: reclaim ignored > RECLAIM_MAX_AGE_MINUTES after sweep
+      - Volume raised to VOL_MULT_CONFIRM = 1.10
+      - Acceptance requires TWO consecutive closes beyond level
+    """
     if len(trigger_df) < 4 or sweep_level is None:
         return None
+
+    # Gate 1: Staleness [FILTER 10]
+    if sweep_timestamp is not None:
+        try:
+            age_minutes = (trigger_df.index[-1] - sweep_timestamp).total_seconds() / 60
+            if age_minutes > RECLAIM_MAX_AGE_MINUTES:
+                return None
+        except Exception:
+            pass
 
     c1 = trigger_df.iloc[-1]
     c2 = trigger_df.iloc[-2]
@@ -700,7 +822,12 @@ def detect_reclaim_or_acceptance(trigger_df, direction, sweep_level):
     if pd.isna(avg_range20) or pd.isna(avg_vol10):
         return None
 
+    # Gate 2: Range
     if rng1 < avg_range20 * RANGE_MULT_CONFIRM:
+        return None
+
+    # Gate 3: Volume [FILTER 2]
+    if c1["volume"] < avg_vol10 * VOL_MULT_CONFIRM:
         return None
 
     price = c1["close"]
@@ -716,10 +843,11 @@ def detect_reclaim_or_acceptance(trigger_df, direction, sweep_level):
             and c1["close"] > c1["open"]
             and c1["close"] > mid
             and lower_wick >= max(REJECT_WICK_PCT_MIN * rng1, wick_floor)
-            and c1["volume"] >= avg_vol10 * VOL_MULT_CONFIRM
         )
+        # [FILTER 11] Two consecutive closes beyond level
         accepted = (
             c1["close"] < sweep_level
+            and c2["close"] < sweep_level
             and c1["low"] < sweep_level
             and c1["close"] < c2["close"]
         )
@@ -735,10 +863,11 @@ def detect_reclaim_or_acceptance(trigger_df, direction, sweep_level):
             and c1["close"] < c1["open"]
             and c1["close"] < mid
             and upper_wick >= max(REJECT_WICK_PCT_MIN * rng1, wick_floor)
-            and c1["volume"] >= avg_vol10 * VOL_MULT_CONFIRM
         )
+        # [FILTER 11] Two consecutive closes beyond level
         accepted = (
             c1["close"] > sweep_level
+            and c2["close"] > sweep_level
             and c1["high"] > sweep_level
             and c1["close"] > c2["close"]
         )
@@ -751,6 +880,10 @@ def detect_reclaim_or_acceptance(trigger_df, direction, sweep_level):
 
 
 def detect_confirmed_displacement(trigger_df, direction, entry_level):
+    """
+    Upgraded: requires close beyond entry by 0.5 × ATR minimum.  [FILTER 12]
+    Prevents micro-displacement noise from triggering CONFIRMED.
+    """
     if len(trigger_df) < 4 or entry_level is None:
         return False
 
@@ -767,43 +900,65 @@ def detect_confirmed_displacement(trigger_df, direction, entry_level):
     if c1["volume"] < avg_vol10 * VOL_MULT_CONFIRM:
         return False
 
+    # ATR clearance gate
+    clearance = avg_range20 * 0.50
+
     if direction == "bullish":
-        return c1["close"] > entry_level and c1["close"] > c1["open"]
+        return c1["close"] > c1["open"] and c1["close"] > entry_level + clearance
     else:
-        return c1["close"] < entry_level and c1["close"] < c1["open"]
+        return c1["close"] < c1["open"] and c1["close"] < entry_level - clearance
 
 
 # =========================================================
-# SCORE
+# SCORE  [FILTER 14]
 # =========================================================
 
 
-def compute_institutional_score(strength, event_type, rr2=None, bias=None):
-    score = max(0, min(100, int(strength)))
+def compute_institutional_score(
+    strength, event_type, rr2=None, bias=None, session=None, liquidity_type=None
+):
+    """
+    Upgraded: session timing and liquidity pool type now factor into score.
+    Uses a float internally then clamps at the end to preserve differentiation.
+    """
+    score = float(max(0, min(100, int(strength))))
 
-    if event_type == "RECLAIM":
-        score += 10
-    elif event_type == "CONFIRMED":
-        score += 18
-    elif event_type == "DOUBLE_SWEEP":
-        score += 12
-    elif event_type == "ACCEPTED":
+    # Event tier
+    event_bonus = {
+        "CONFIRMED": 20,
+        "RECLAIM": 12,
+        "DOUBLE_SWEEP": 14,
+        "DETECTED": 0,
+        "ACCEPTED": -10,
+    }
+    score += event_bonus.get(event_type, 0)
+
+    # RR quality
+    if rr2 is not None:
+        if rr2 >= 3.0:
+            score += 14
+        elif rr2 >= 2.5:
+            score += 10
+        elif rr2 >= 1.8:
+            score += 6
+        elif rr2 < 1.1:
+            score -= 12
+
+    # Bias alignment bonus
+    if bias in ("Bullish", "Bearish") and event_type in ("RECLAIM", "CONFIRMED"):
+        score += 5
+
+    # Session quality bonus
+    if session in PRIME_SESSIONS:
+        score += 6
+    elif session == "Off-Hours":
         score -= 8
 
-    if rr2 is not None:
-        if rr2 >= 2.5:
-            score += 12
-        elif rr2 >= 1.8:
-            score += 8
-        elif rr2 < 1.1:
-            score -= 10
+    # Named liquidity pool bonus
+    if liquidity_type in ("Equal Highs", "Equal Lows"):
+        score += 5
 
-    if bias == "Bullish" and event_type in ["RECLAIM", "CONFIRMED"]:
-        score += 4
-    if bias == "Bearish" and event_type in ["RECLAIM", "CONFIRMED"]:
-        score += 4
-
-    return max(0, min(100, score))
+    return max(0, min(100, int(score)))
 
 
 # =========================================================
@@ -907,7 +1062,6 @@ def build_embed(
     clean = symbol.replace(":USDT", "")
 
     title = f"{title_text} — {clean}  ${price:.4f}"
-
     body = (
         f"{desc}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -923,7 +1077,7 @@ def build_embed(
         "description": body,
         "color": color,
         "fields": [],
-        "footer": {"text": "Sweep Hunter v41.3 RADAR — DougyWu Signals"},
+        "footer": {"text": "Sweep Hunter v42.0 — DougyWu Signals"},
     }
 
     if extra_fields:
@@ -981,7 +1135,6 @@ def send_discord_alert(embed, chart_path=None):
 
 
 def detect_pattern(direction, df, sweep_level):
-    """Classify the visual pattern around the swept liquidity level."""
     if df is None or len(df) < 6 or sweep_level is None:
         return "Unknown"
 
@@ -1019,7 +1172,6 @@ def detect_pattern(direction, df, sweep_level):
 
 
 def trade_viability(direction, current_price, entry, threshold_pct=0.25):
-    """Fast UI helper: tells whether a signal is still near the retest entry zone."""
     if current_price is None or entry is None:
         return "UNKNOWN", None
     try:
@@ -1088,6 +1240,8 @@ def post_sweep_to_radar(
             threshold_pct=0.25 if TRIGGER_TIMEFRAME == "1m" else 0.50,
         )
 
+        session = classify_time_window(df.index[-1])
+
         payload = {
             "id": f"{event_type.lower()}_{clean_symbol_for_radar(symbol).replace('/', '_')}_{int(time.time() * 1000)}",
             "timestampUtc": (
@@ -1097,7 +1251,7 @@ def post_sweep_to_radar(
             ),
             "pair": clean_symbol_for_radar(symbol),
             "timeframe": TRIGGER_TIMEFRAME,
-            "session": classify_time_window(df.index[-1]),
+            "session": session,
             "directionBias": direction_bias,
             "eventType": event_type,
             "sweepType": liquidity_type if liquidity_type else default_sweep_type,
@@ -1134,16 +1288,13 @@ def post_sweep_to_radar(
             "rr2": None if plan["rr_tp2"] is None else float(plan["rr_tp2"]),
         }
 
-        # SEND TO BOTH LOCAL + LIVE
         for url in BRIDGE_URLS:
             try:
                 resp = requests.post(url, json=payload, timeout=BRIDGE_TIMEOUT)
-
                 if resp.status_code >= 300:
                     print(f"[RADAR WARN] {url} -> {resp.status_code} {resp.text}")
                 else:
                     print(f"[RADAR OK] {url} -> {payload['pair']} {event_type}")
-
             except Exception as e:
                 print(f"[RADAR ERROR] {url}: {e}")
 
@@ -1226,7 +1377,6 @@ def send_detected_alert(
         ("Regime / Bias", f"`{regime}` / `{bias}`"),
         ("Time Window", f"`{classify_time_window(df.index[-1])}`"),
     ] + plan_fields(plan)
-
     embed, chart = build_embed(
         symbol,
         title,
@@ -1269,7 +1419,6 @@ def send_reclaim_alert(
         ("Regime / Bias", f"`{regime}` / `{bias}`"),
         ("Time Window", f"`{classify_time_window(df.index[-1])}`"),
     ] + plan_fields(plan)
-
     embed, chart = build_embed(
         symbol,
         title,
@@ -1312,7 +1461,6 @@ def send_accepted_alert(
         ("Regime / Bias", f"`{regime}` / `{bias}`"),
         ("Time Window", f"`{classify_time_window(df.index[-1])}`"),
     ] + plan_fields(plan)
-
     embed, chart = build_embed(
         symbol,
         title,
@@ -1355,7 +1503,6 @@ def send_confirmed_alert(
         ("Regime / Bias", f"`{regime}` / `{bias}`"),
         ("Time Window", f"`{classify_time_window(df.index[-1])}`"),
     ] + plan_fields(plan)
-
     embed, chart = build_embed(
         symbol,
         title,
@@ -1397,7 +1544,6 @@ def send_double_sweep_alert(
         ("Regime / Bias", f"`{regime}` / `{bias}`"),
         ("Time Window", f"`{classify_time_window(df.index[-1])}`"),
     ] + plan_fields(plan)
-
     embed, chart = build_embed(
         symbol,
         title,
@@ -1421,7 +1567,7 @@ def main_loop():
     exchange = init_exchange()
     symbols = get_sweep_hunter_symbols(exchange)
 
-    print("[RUN] Sweep Hunter v41.3 RADAR started.\n")
+    print("[RUN] Sweep Hunter v42.0 NOISE FILTERED started.\n")
     for s in symbols:
         print("  ", s)
     print()
@@ -1430,6 +1576,7 @@ def main_loop():
     print()
 
     last_detected = {}
+    last_detected_level = {}  # [FILTER 7] level-reset guard
     last_reclaim = {}
     last_accepted = {}
     last_confirmed = {}
@@ -1441,9 +1588,6 @@ def main_loop():
     cycle_num = 0
 
     while True:
-
-        # =======================================================
-
         cycle_num += 1
         cycle_start = time.time()
 
@@ -1453,6 +1597,7 @@ def main_loop():
         confirmed_count = 0
         double_count = 0
         err_count = 0
+
         dbg(f"\n{'='*60}")
         dbg(f"[CYCLE {cycle_num}] START {datetime.now(UTC).strftime('%H:%M:%S')} UTC")
         dbg(f"{'='*60}")
@@ -1477,7 +1622,7 @@ def main_loop():
                 dbg(f"   [FETCH] {symbol} took {fetch_elapsed:.2f}s")
 
                 if map_df is None or setup_df is None or trigger_df is None:
-                    dbg(f"   [SKIP] Missing dataframe(s)")
+                    dbg("   [SKIP] Missing dataframe(s)")
                     continue
 
                 if len(map_df) < 50 or len(setup_df) < 50 or len(trigger_df) < 80:
@@ -1511,14 +1656,13 @@ def main_loop():
                 ) = detect_setup_sweep(setup_df, map_df)
 
                 dbg(
-                    f"   [SETUP CHECK] flag={sweep_flag} dir={sweep_dir} strength={strength} "
-                    f"map={setup_level if map_level is not None else '—'} "
-                    f"setup={setup_level if setup_level is not None else '—'} "
-                    f"liq={liquidity_type}"
+                    f"   [SETUP CHECK] flag={sweep_flag} dir={sweep_dir} "
+                    f"strength={strength} liq={liquidity_type}"
                 )
 
                 now = time.time()
 
+                # Keepalive ping
                 if (
                     (not sweep_flag)
                     and ENABLE_KEEPALIVE_PINGS
@@ -1528,7 +1672,6 @@ def main_loop():
                     if now - last_ping.get(symbol, 0) > PING_COOLDOWN:
                         post_keepalive_ping(symbol, trigger_df, regime, bias)
                         last_ping[symbol] = now
-                        ping_count += 1
 
                 if sweep_flag and sweep_dir:
                     prev_meta = last_sweep_meta.get(symbol)
@@ -1549,14 +1692,17 @@ def main_loop():
 
                     dbg(
                         f"   [SETUP SWEEP] dir={sweep_dir} strength={strength} "
-                        f"variant={variant} rr1={rr_text(plan['rr_tp1'])} rr2={rr_text(plan['rr_tp2'])}"
+                        f"variant={variant} rr1={rr_text(plan['rr_tp1'])} "
+                        f"rr2={rr_text(plan['rr_tp2'])}"
                     )
 
+                    # [FILTER 15] Store sweep_ts for reclaim staleness check
                     last_sweep_meta[symbol] = {
                         "dir": sweep_dir,
                         "level": setup_level,
                         "map_level": map_level,
                         "ts": setup_df.index[-1],
+                        "sweep_ts": setup_df.index[-1],  # used by reclaim gate
                         "strength": strength,
                         "variant": variant,
                         "liquidity_type": liquidity_type,
@@ -1564,6 +1710,7 @@ def main_loop():
                         "bias": bias,
                     }
 
+                    # Double sweep
                     if variant == "double_sweep" and (
                         now - last_double.get(symbol, 0) > DOUBLE_SWEEP_COOLDOWN
                     ):
@@ -1601,69 +1748,82 @@ def main_loop():
                             last_double[symbol] = now
                             double_count += 1
 
-                    if now - last_detected.get(symbol, 0) > DETECTED_COOLDOWN:
-                        print(
-                            f"[DETECTED] {symbol} {sweep_dir} strength={strength} variant={variant}"
-                        )
-                        send_detected_alert(
-                            symbol,
-                            trigger_df,
-                            sweep_dir,
-                            strength,
-                            variant,
-                            regime,
-                            bias,
-                            map_level,
-                            setup_level,
-                            liquidity_type,
-                            plan,
-                        )
-                        post_sweep_to_radar(
-                            symbol=symbol,
-                            event_type="SWEEP_DETECTED",
-                            direction=sweep_dir,
-                            strength=strength,
-                            regime=regime,
-                            bias=bias,
-                            map_level=map_level,
-                            setup_level=setup_level,
-                            liquidity_type=liquidity_type,
-                            variant=variant,
-                            plan=plan,
-                            df=trigger_df,
-                            ema_context="Setup Sweep Detected",
-                        )
+                    # [FILTER 7] DETECTED: cooldown + level-reset guard
+                    level_moved = (
+                        symbol not in last_detected_level
+                        or abs(setup_level - last_detected_level[symbol])
+                        / (setup_level + 1e-9)
+                        > 0.002
+                    )
+                    cooldown_ok = now - last_detected.get(symbol, 0) > DETECTED_COOLDOWN
 
-                        c = trigger_df.iloc[-1]
-                        vol_avg10 = trigger_df["volume"].rolling(10).mean().iloc[-2]
-                        log_sweep_event(
-                            symbol=symbol,
-                            event="DETECTED",
-                            direction=sweep_dir,
-                            strength=strength,
-                            price=c["close"],
-                            map_level=map_level,
-                            setup_level=setup_level,
-                            liquidity_type=liquidity_type,
-                            regime=regime,
-                            bias=bias,
-                            volume=c["volume"],
-                            vol_avg10=vol_avg10,
-                            range_abs=c["range_abs"],
-                            range_pct=c["range_pct"],
-                            atr14=c["atr14"],
-                            variant=variant,
-                            entry=plan["entry"],
-                            stop=plan["stop"],
-                            tp1=plan["tp1"],
-                            tp2=plan["tp2"],
-                            rr_tp1=plan["rr_tp1"],
-                            rr_tp2=plan["rr_tp2"],
-                            ts_utc=trigger_df.index[-1],
-                        )
-                        last_detected[symbol] = now
-                        det_count += 1
+                    if cooldown_ok and level_moved:
+                        if plan["rr_tp1"] is None or plan["rr_tp1"] >= MIN_RR_TO_ALERT:
+                            print(
+                                f"[DETECTED] {symbol} {sweep_dir} "
+                                f"strength={strength} variant={variant}"
+                            )
+                            send_detected_alert(
+                                symbol,
+                                trigger_df,
+                                sweep_dir,
+                                strength,
+                                variant,
+                                regime,
+                                bias,
+                                map_level,
+                                setup_level,
+                                liquidity_type,
+                                plan,
+                            )
+                            post_sweep_to_radar(
+                                symbol=symbol,
+                                event_type="SWEEP_DETECTED",
+                                direction=sweep_dir,
+                                strength=strength,
+                                regime=regime,
+                                bias=bias,
+                                map_level=map_level,
+                                setup_level=setup_level,
+                                liquidity_type=liquidity_type,
+                                variant=variant,
+                                plan=plan,
+                                df=trigger_df,
+                                ema_context="Setup Sweep Detected",
+                            )
 
+                            c = trigger_df.iloc[-1]
+                            vol_avg10 = trigger_df["volume"].rolling(10).mean().iloc[-2]
+                            log_sweep_event(
+                                symbol=symbol,
+                                event="DETECTED",
+                                direction=sweep_dir,
+                                strength=strength,
+                                price=c["close"],
+                                map_level=map_level,
+                                setup_level=setup_level,
+                                liquidity_type=liquidity_type,
+                                regime=regime,
+                                bias=bias,
+                                volume=c["volume"],
+                                vol_avg10=vol_avg10,
+                                range_abs=c["range_abs"],
+                                range_pct=c["range_pct"],
+                                atr14=c["atr14"],
+                                variant=variant,
+                                entry=plan["entry"],
+                                stop=plan["stop"],
+                                tp1=plan["tp1"],
+                                tp2=plan["tp2"],
+                                rr_tp1=plan["rr_tp1"],
+                                rr_tp2=plan["rr_tp2"],
+                                ts_utc=trigger_df.index[-1],
+                            )
+                            last_detected[symbol] = now
+                            last_detected_level[symbol] = setup_level
+                            det_count += 1
+
+                # Trigger-level checks (reclaim / accepted / confirmed)
                 if symbol in last_sweep_meta:
                     sm = last_sweep_meta[symbol]
                     direction = sm["dir"]
@@ -1672,9 +1832,14 @@ def main_loop():
                     strength = sm["strength"]
                     variant = sm["variant"]
                     liquidity_type = sm["liquidity_type"]
+                    sweep_ts = sm.get("sweep_ts")  # [FILTER 15]
 
+                    # [FILTER 10] Pass sweep_ts for staleness check
                     trigger_state = detect_reclaim_or_acceptance(
-                        trigger_df, direction, setup_level
+                        trigger_df,
+                        direction,
+                        setup_level,
+                        sweep_timestamp=sweep_ts,
                     )
                     dbg(f"   [TRIGGER STATE] {trigger_state}")
 
@@ -1686,12 +1851,24 @@ def main_loop():
                         reclaim_level=trigger_df.iloc[-1]["close"],
                     )
 
+                    session = classify_time_window(trigger_df.index[-1])
+
                     if trigger_state == "reclaim" and (
                         now - last_reclaim.get(symbol, 0) > RECLAIM_COOLDOWN
                     ):
                         if plan["rr_tp1"] is None or plan["rr_tp1"] >= MIN_RR_TO_ALERT:
+                            scored = compute_institutional_score(
+                                strength,
+                                "RECLAIM",
+                                plan["rr_tp2"],
+                                bias,
+                                session=session,
+                                liquidity_type=liquidity_type,
+                            )
                             print(
-                                f"[RECLAIM] {symbol} {direction} strength={strength} rr2={rr_text(plan['rr_tp2'])}"
+                                f"[RECLAIM] {symbol} {direction} "
+                                f"strength={strength} score={scored} "
+                                f"rr2={rr_text(plan['rr_tp2'])}"
                             )
                             send_reclaim_alert(
                                 symbol,
@@ -1710,9 +1887,7 @@ def main_loop():
                                 symbol=symbol,
                                 event_type="SWEEP_RECLAIM",
                                 direction=direction,
-                                strength=compute_institutional_score(
-                                    strength, "RECLAIM", plan["rr_tp2"], bias
-                                ),
+                                strength=scored,
                                 regime=regime,
                                 bias=bias,
                                 map_level=map_level,
@@ -1730,9 +1905,7 @@ def main_loop():
                                 symbol=symbol,
                                 event="RECLAIM",
                                 direction=direction,
-                                strength=compute_institutional_score(
-                                    strength, "RECLAIM", plan["rr_tp2"], bias
-                                ),
+                                strength=scored,
                                 price=c["close"],
                                 map_level=map_level,
                                 setup_level=setup_level,
@@ -1759,6 +1932,14 @@ def main_loop():
                     if trigger_state == "accepted" and (
                         now - last_accepted.get(symbol, 0) > ACCEPTED_COOLDOWN
                     ):
+                        scored = compute_institutional_score(
+                            strength,
+                            "ACCEPTED",
+                            plan["rr_tp2"],
+                            bias,
+                            session=session,
+                            liquidity_type=liquidity_type,
+                        )
                         print(f"[ACCEPTED] {symbol} {direction} strength={strength}")
                         send_accepted_alert(
                             symbol,
@@ -1777,9 +1958,7 @@ def main_loop():
                             symbol=symbol,
                             event_type="SWEEP_ACCEPTED",
                             direction=direction,
-                            strength=compute_institutional_score(
-                                strength, "ACCEPTED", plan["rr_tp2"], bias
-                            ),
+                            strength=scored,
                             regime=regime,
                             bias=bias,
                             map_level=map_level,
@@ -1797,9 +1976,7 @@ def main_loop():
                             symbol=symbol,
                             event="ACCEPTED",
                             direction=direction,
-                            strength=compute_institutional_score(
-                                strength, "ACCEPTED", plan["rr_tp2"], bias
-                            ),
+                            strength=scored,
                             price=c["close"],
                             map_level=map_level,
                             setup_level=setup_level,
@@ -1832,8 +2009,17 @@ def main_loop():
                                 plan["rr_tp1"] is None
                                 or plan["rr_tp1"] >= MIN_RR_TO_ALERT
                             ):
+                                scored = compute_institutional_score(
+                                    strength,
+                                    "CONFIRMED",
+                                    plan["rr_tp2"],
+                                    bias,
+                                    session=session,
+                                    liquidity_type=liquidity_type,
+                                )
                                 print(
-                                    f"[CONFIRMED] {symbol} {direction} strength={strength}"
+                                    f"[CONFIRMED] {symbol} {direction} "
+                                    f"strength={strength} score={scored}"
                                 )
                                 send_confirmed_alert(
                                     symbol,
@@ -1852,9 +2038,7 @@ def main_loop():
                                     symbol=symbol,
                                     event_type="SWEEP_CONFIRMED",
                                     direction=direction,
-                                    strength=compute_institutional_score(
-                                        strength, "CONFIRMED", plan["rr_tp2"], bias
-                                    ),
+                                    strength=scored,
                                     regime=regime,
                                     bias=bias,
                                     map_level=map_level,
@@ -1874,9 +2058,7 @@ def main_loop():
                                     symbol=symbol,
                                     event="CONFIRMED",
                                     direction=direction,
-                                    strength=compute_institutional_score(
-                                        strength, "CONFIRMED", plan["rr_tp2"], bias
-                                    ),
+                                    strength=scored,
                                     price=c["close"],
                                     map_level=map_level,
                                     setup_level=setup_level,
