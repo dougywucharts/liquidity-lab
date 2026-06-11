@@ -1,0 +1,9 @@
+node_modules
+Server
+Screenshots
+screenshots
+*.png
+*.csv
+*.log
+BOTFINAL.py
+.git

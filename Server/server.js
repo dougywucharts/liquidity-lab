@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import OpenAI from 'openai'
+import Anthropic from '@anthropic-ai/sdk'
 import express from 'express'
 import cors from 'cors'
 
@@ -28,7 +28,7 @@ import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { Resend } from 'resend'
 
-// ---------------- PRISMA / STRIPE / EMAIL ----------------
+// ---------------- PRISMA / STRIPE / EMAIL / CLAUDE ----------------
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL })
 const prisma = new PrismaClient({ adapter })
 
@@ -40,8 +40,9 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null
 
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+// Switched from OpenAI to Anthropic Claude
+const anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null
 
 const ENABLE_AI = String(process.env.ENABLE_AI || '').toLowerCase() === 'true'
@@ -75,20 +76,18 @@ function signToken (user) {
 
 function canUseAiReview (user, limit = 5) {
   const now = new Date()
-
   if (!user.aiReviewReset || now > new Date(user.aiReviewReset)) {
     return { allowed: true, reset: true }
   }
-
   if ((user.aiReviewCount || 0) >= limit) {
     return { allowed: false }
   }
-
   return { allowed: true }
 }
 
+// ---------------- CLAUDE AI REVIEW ----------------
 async function runAiTradeReview (payload) {
-  if (!openai || !ENABLE_AI) {
+  if (!anthropic || !ENABLE_AI) {
     return {
       score: null,
       verdict: 'AI disabled',
@@ -99,102 +98,212 @@ async function runAiTradeReview (payload) {
     }
   }
 
-  const structuredInput = {
-    trade: {
-      pair: payload.pair || '',
-      timeframe: payload.timeframe || '',
-      directionBias: payload.directionBias || '',
-      eventType: payload.eventType || '',
-      sweepType: payload.sweepType || '',
-      emaContext: payload.emaContext || '',
-      session: payload.session || '',
-      entry: payload.entry || '',
-      stop: payload.stop || '',
-      exit: payload.exit || '',
-      tp1: payload.tp1 || '',
-      tp2: payload.tp2 || '',
-      rr1: payload.rr1 || '',
-      rr2: payload.rr2 || '',
-      action: payload.action || '',
-      timing: payload.timing || '',
-      planFollowed: payload.planFollowed || '',
-      ruleBreak: payload.ruleBreak || '',
-      setupQuality: payload.setupQuality || '',
-      disciplineScore: payload.disciplineScore || '',
-      emotionalPressure: payload.emotionalPressure || '',
-      confidenceSelf: payload.confidenceSelf || '',
-      outcome: payload.outcome || '',
-      durationMinutes: payload.durationMinutes || '',
-      pnl: payload.pnl || '',
-      notes: payload.notes || ''
-    },
-    userStats: payload.userStats || {
-      failRate: 0.37,
-      winRate: 0.63
-    },
+  // Build the content array — text + optional screenshot
+  const contentBlocks = []
 
-    groupStats: payload.groupStats || {
-      failRate: 0.42,
-      winRate: 0.58
-    },
-    coachingRules: {
-      strategy: 'liquidity sweep trading',
-      mustCheck: [
-        'Was there a valid sweep?',
-        'Was confirmation waited for?',
-        'Was entry chasing or controlled?',
-        'Was stop placement logical?',
-        'Was RR acceptable?',
-        'Was this trade aligned with session/context?'
-      ],
-      avoidGenericFeedback: true
-    },
-    requiredJsonShape: {
-      tradeScore: 'number 0-100',
-      aiGrade: 'A+, A, B+, B, C, D, or F',
-
-      setupScore: 'number 0-25',
-      executionScore: 'number 0-25',
-      managementScore: 'number 0-20',
-      disciplineScoreAi: 'number 0-15',
-
-      verdict: 'short direct verdict',
-      strengths: ['specific things done well'],
-      mistakes: ['specific issues or rule breaks'],
-      coaching: 'specific correction for next time',
-      scoreNotes: 'short explanation of why this score was assigned',
-      comparison: 'compare userStats vs groupStats if provided'
-    }
+  // If screenshot was provided, add it as a vision block
+  if (payload.screenshotBase64 && payload.screenshotMimeType) {
+    contentBlocks.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: payload.screenshotMimeType || 'image/png',
+        data: payload.screenshotBase64
+      }
+    })
   }
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    response_format: { type: 'json_object' },
-    messages: [
-      {
-        role: 'system',
-        content:
-          'You are a strict liquidity-sweep trading coach. Do not give generic advice. Reference the actual trade data. Be direct, concise, and behavior-focused.'
-      },
-      {
-        role: 'user',
-        content: JSON.stringify(structuredInput, null, 2)
-      }
-    ],
-    temperature: 0.2
+  // Build the trade context text
+  const tradeContext = `
+You are a strict professional liquidity-sweep trading coach reviewing a logged trade.
+Analyze this trade and return a JSON object with your assessment.
+
+TRADE DATA:
+- Pair: ${payload.pair || '—'}
+- Timeframe: ${payload.timeframe || '—'}
+- Direction: ${payload.directionBias || '—'}
+- Event Type: ${payload.eventType || '—'}
+- Sweep Type: ${payload.sweepType || '—'}
+- EMA Context: ${payload.emaContext || '—'}
+- Session: ${payload.session || '—'}
+- Entry: ${payload.entry || '—'}
+- Stop: ${payload.stop || '—'}
+- TP1: ${payload.tp1 || '—'} (${payload.rr1 ? payload.rr1 + 'R' : '—'})
+- TP2: ${payload.tp2 || '—'} (${payload.rr2 ? payload.rr2 + 'R' : '—'})
+- Exit: ${payload.exit || 'Still open'}
+- Outcome: ${payload.outcome || 'Open'}
+- PnL: ${payload.pnl || '—'}
+- Action: ${payload.action || '—'}
+- Timing: ${payload.timing || '—'}
+- Plan Followed: ${payload.planFollowed || '—'}
+- Rule Break: ${payload.ruleBreak || 'None'}
+- Setup Quality (self): ${payload.setupQuality || '—'}/10
+- Discipline (self): ${payload.disciplineScore || '—'}/10
+- Emotional Pressure: ${payload.emotionalPressure || '—'}/10
+- Confidence (self): ${payload.confidenceSelf || '—'}/10
+- Notes: ${payload.notes || 'None'}
+
+${
+  payload.screenshotBase64
+    ? 'A chart screenshot has been provided above. Reference what you see in the chart in your review.'
+    : ''
+}
+
+USER STATS (their history):
+- Win Rate: ${payload.userStats?.winRate || '—'}
+- Fail Rate: ${payload.userStats?.failRate || '—'}
+
+COACHING RULES:
+- Strategy: Liquidity sweep trading (equal highs/lows, EMA99 rejections, reclaim entries)
+- Be direct and specific — no generic feedback
+- Reference the actual trade data in your response
+- If a screenshot is provided, describe what you see and whether it matches the trade data
+- Grade harshly — most trades are B or lower
+
+Return ONLY a valid JSON object with this exact shape:
+{
+  "overallScore": <number 0-100>,
+  "overallGrade": <"A+" | "A" | "B+" | "B" | "C" | "D" | "F">,
+  "setupScore": <number 0-25>,
+  "executionScore": <number 0-25>,
+  "managementScore": <number 0-20>,
+  "disciplineScoreAi": <number 0-15>,
+  "verdict": "<one sentence direct verdict>",
+  "executionAssessment": "<DISCIPLINED | MIXED | RULE BREAK>",
+  "strengths": ["<specific strength 1>", "<specific strength 2>"],
+  "mistakes": ["<specific mistake 1>", "<specific mistake 2>"],
+  "coaching": "<specific correction for next trade — reference the actual setup>",
+  "scoreNotes": "<brief explanation of score>",
+  "chartRead": "<what you see in the chart if screenshot provided, else null>",
+  "comparison": "<compare their stats vs typical trader if stats provided>"
+}
+`
+
+  contentBlocks.push({
+    type: 'text',
+    text: tradeContext
   })
 
-  const raw = response.choices?.[0]?.message?.content || '{}'
-  const parsed = JSON.parse(raw)
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1500,
+    messages: [
+      {
+        role: 'user',
+        content: contentBlocks
+      }
+    ]
+  })
+
+  // Parse response — Claude returns text, extract JSON
+  const rawText = response.content
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('')
+
+  // Strip markdown code fences if present
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) {
+    throw new Error('Claude returned no JSON')
+  }
+
+  const parsed = JSON.parse(jsonMatch[0])
 
   return {
-    score: Number.isFinite(Number(parsed.score)) ? Number(parsed.score) : null,
-    verdict: parsed.verdict || 'No verdict',
+    // Map to the shape the frontend expects
+    score: parsed.overallScore ?? null,
+    overallScore: parsed.overallScore ?? null,
+    overallGrade: parsed.overallGrade ?? null,
+    grade: parsed.overallGrade ?? null,
+    verdict: parsed.verdict ?? 'No verdict',
+    executionAssessment: parsed.executionAssessment ?? 'MIXED',
     strengths: Array.isArray(parsed.strengths) ? parsed.strengths : [],
     mistakes: Array.isArray(parsed.mistakes) ? parsed.mistakes : [],
-    coaching: parsed.coaching || 'No coaching returned.',
-    comparison: parsed.comparison || null
+    coaching: parsed.coaching ?? 'No coaching returned.',
+    coachingTip: parsed.coaching ?? 'No coaching returned.',
+    scoreNotes: parsed.scoreNotes ?? '',
+    chartRead: parsed.chartRead ?? null,
+    comparison: parsed.comparison ?? null,
+    setupScore: parsed.setupScore ?? null,
+    executionScore: parsed.executionScore ?? null,
+    managementScore: parsed.managementScore ?? null,
+    disciplineScoreAi: parsed.disciplineScoreAi ?? null
   }
+}
+
+// ---------------- TRADER DNA ----------------
+async function runTraderDna (logs) {
+  if (!anthropic || !ENABLE_AI) {
+    return { error: 'AI disabled' }
+  }
+
+  // Summarize logs for the prompt — send condensed version to save tokens
+  const logSummaries = logs.slice(0, 50).map((log, i) => ({
+    n: i + 1,
+    pair: log.pair,
+    direction: log.directionBias,
+    session: log.session,
+    sweepType: log.sweepType,
+    emaContext: log.emaContext,
+    outcome: log.outcome,
+    realizedRR: log.realizedRR,
+    pnl: log.pnl,
+    disciplineScore: log.disciplineScore,
+    setupQuality: log.setupQuality,
+    emotionalPressure: log.emotionalPressure,
+    timing: log.timing,
+    planFollowed: log.planFollowed,
+    ruleBreak: log.ruleBreak,
+    aiGrade: log.aiGrade,
+    aiScore: log.aiScore,
+    notes: log.notes ? log.notes.slice(0, 100) : ''
+  }))
+
+  const prompt = `
+You are analyzing a trader's complete trade history to generate their "Trader DNA" profile.
+This is a personalized psychological and performance analysis based on their actual logged trades.
+
+TRADE HISTORY (${logs.length} trades):
+${JSON.stringify(logSummaries, null, 2)}
+
+Generate a comprehensive Trader DNA profile. Be specific — reference actual patterns you see in the data.
+Don't make up patterns that aren't in the data.
+
+Return ONLY a valid JSON object:
+{
+  "strengths": ["<specific strength based on data>", ...],
+  "weaknesses": ["<specific weakness based on data>", ...],
+  "bestSession": "<session name and win rate or avg RR>",
+  "worstSession": "<session name and why>",
+  "bestSetup": "<setup type and performance>",
+  "worstSetup": "<setup type and why it struggles>",
+  "patternBias": "<any directional or psychological bias observed>",
+  "coachingFocus": "<the single most impactful thing to improve right now>",
+  "overallAssessment": "<2-3 sentence honest summary of this trader>",
+  "traderType": "<a short label like 'Disciplined Momentum Trader' or 'Impatient Scalper'>",
+  "winRate": <number>,
+  "avgRR": <number or null>,
+  "totalTrades": <number>,
+  "bestStreakType": "<Win or Loss>",
+  "riskDisciplineScore": <number 0-100>
+}
+`
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 2000,
+    messages: [{ role: 'user', content: prompt }]
+  })
+
+  const rawText = response.content
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('')
+
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) throw new Error('Claude returned no JSON for Trader DNA')
+
+  return JSON.parse(jsonMatch[0])
 }
 
 function getBearerToken (req) {
@@ -207,14 +316,9 @@ async function requireAuth (req, res, next) {
   try {
     const token = getBearerToken(req)
     if (!token) return res.status(401).json({ error: 'Missing auth token' })
-
     const decoded = jwt.verify(token, JWT_SECRET)
-    const user = await prisma.user.findUnique({
-      where: { id: decoded.userId }
-    })
-
+    const user = await prisma.user.findUnique({ where: { id: decoded.userId } })
     if (!user) return res.status(401).json({ error: 'Invalid user' })
-
     req.user = user
     next()
   } catch (err) {
@@ -254,7 +358,6 @@ function buildTradeScorecard (trade) {
     const risk = Math.abs(entry - stop)
     const reward = Math.abs(tp1 - entry)
     const rr = risk > 0 ? reward / risk : 0
-
     if (rr < 1.5) {
       riskScore -= 8
       notes.push('Risk/reward was weak.')
@@ -277,18 +380,15 @@ function buildTradeScorecard (trade) {
     emotionScore -= 5
     notes.push('Possible chase/FOMO entry.')
   }
-
   if (text.includes('early') || text.includes('before confirmation')) {
     entryScore -= 10
     disciplineScore -= 5
     notes.push('Entered before confirmation.')
   }
-
   if (text.includes('revenge')) {
     emotionScore -= 10
     notes.push('Possible revenge trade.')
   }
-
   if (text.includes('sweep')) setupScore += 5
   if (text.includes('rejection')) setupScore += 3
   if (text.includes('breakdown') || text.includes('bos')) entryScore += 5
@@ -324,7 +424,6 @@ function getTradeGrade (item) {
   ) {
     return 'DISCIPLINED'
   }
-
   if (
     item.timing === 'Early' ||
     item.timing === 'Chase Entry' ||
@@ -333,7 +432,6 @@ function getTradeGrade (item) {
   ) {
     return 'RULE BREAK'
   }
-
   return 'MIXED'
 }
 
@@ -358,26 +456,17 @@ function analyzeTrade (payload) {
   const overallGrade = overallScore >= 88 ? 'A' : overallScore >= 76 ? 'B' : 'C'
 
   const whatWasGood = []
-  if (payload.planFollowed === 'Yes') {
+  if (payload.planFollowed === 'Yes')
     whatWasGood.push('Followed the trade plan')
-  }
-  if (payload.timing === 'On Confirmation') {
+  if (payload.timing === 'On Confirmation')
     whatWasGood.push('Waited for confirmation')
-  }
-  if (setupQuality >= 8) {
-    whatWasGood.push('High-quality setup')
-  }
+  if (setupQuality >= 8) whatWasGood.push('High-quality setup')
 
   const whatNeedsWork = []
-  if (hasRuleBreak) {
-    whatNeedsWork.push(payload.ruleBreak)
-  }
-  if (payload.timing === 'Early' || payload.timing === 'Chase Entry') {
+  if (hasRuleBreak) whatNeedsWork.push(payload.ruleBreak)
+  if (payload.timing === 'Early' || payload.timing === 'Chase Entry')
     whatNeedsWork.push('Entry timing')
-  }
-  if (emotionalPressure >= 7) {
-    whatNeedsWork.push('Emotional control')
-  }
+  if (emotionalPressure >= 7) whatNeedsWork.push('Emotional control')
 
   return {
     overallScore,
@@ -410,15 +499,12 @@ function analyzeTrade (payload) {
 
 function canUseScreenshot (user, limit = 5) {
   const now = new Date()
-
   if (!user.screenshotReset || now > new Date(user.screenshotReset)) {
     return { allowed: true, reset: true }
   }
-
   if ((user.screenshotCount || 0) >= limit) {
     return { allowed: false }
   }
-
   return { allowed: true }
 }
 
@@ -427,11 +513,9 @@ async function sendSweepAlertEmail (payload) {
     console.warn('[EMAIL] Missing Resend config. Skipping sweep email.')
     return
   }
-
   const subject = `${safe(payload.pair)} — ${safe(payload.eventType)} — ${safe(
     payload.directionBias
   )}`
-
   const html = `
     <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111;">
       <h2 style="margin-bottom:8px;">Liquidity Lab Alert</h2>
@@ -463,14 +547,12 @@ async function sendSweepAlertEmail (payload) {
       </table>
     </div>
   `
-
   await resend.emails.send({
     from: ALERT_FROM_EMAIL,
     to: ALERT_TO_EMAIL,
     subject,
     html
   })
-
   console.log('[EMAIL] Sweep alert sent:', subject)
 }
 
@@ -479,15 +561,13 @@ async function sendTradeReviewEmail (log) {
     console.warn('[EMAIL] Missing Resend config. Skipping trade review email.')
     return
   }
-
   const subject = `Trade Review — ${safe(log.pair)} — ${safe(log.outcome)}`
-
   const html = `
     <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111;">
-      <h2 style="margin-bottom:8px;">Liquidity Lab Trade Review</h2>
-      <p style="margin-top:0;">${safe(log.pair)} • ${safe(
-    log.timeframe
-  )} • ${safe(log.directionBias)}</p>
+      <h2>Liquidity Lab Trade Review</h2>
+      <p>${safe(log.pair)} • ${safe(log.timeframe)} • ${safe(
+    log.directionBias
+  )}</p>
       <table cellpadding="8" cellspacing="0" border="1" style="border-collapse:collapse;border-color:#ddd;">
         <tr><td><strong>Outcome</strong></td><td>${safe(log.outcome)}</td></tr>
         <tr><td><strong>PnL</strong></td><td>${safe(log.pnl)}</td></tr>
@@ -506,58 +586,48 @@ async function sendTradeReviewEmail (log) {
       <p><strong>Notes:</strong> ${safe(log.notes)}</p>
     </div>
   `
-
   await resend.emails.send({
     from: ALERT_FROM_EMAIL,
     to: ALERT_TO_EMAIL,
     subject,
     html
   })
-
   console.log('[EMAIL] Trade review sent:', subject)
 }
 
 async function getOrCreateStripeCustomer (user) {
   if (!stripe) throw new Error('Stripe not configured')
   if (user.stripeCustomerId) return user.stripeCustomerId
-
   const customer = await stripe.customers.create({
     email: user.email,
     metadata: { userId: user.id }
   })
-
   await prisma.user.update({
     where: { id: user.id },
     data: { stripeCustomerId: customer.id }
   })
-
   return customer.id
 }
 
 function resolveBillingPlanFromPriceId (priceId) {
   const normalized = String(priceId || '')
-
   const starterIds = [
     process.env.STRIPE_PRICE_STARTER,
     process.env.PRICE_STARTER
   ].filter(Boolean)
-
   const coreIds = [
     process.env.STRIPE_PRICE_CORE,
     process.env.PRICE_CORE
   ].filter(Boolean)
-
   const proIds = [
     process.env.STRIPE_PRICE_PRO,
     process.env.PRICE_PRO,
     process.env.PRICE_PRO_MONTHLY
   ].filter(Boolean)
-
   const yearlyIds = [
     process.env.STRIPE_PRICE_PRO_YEARLY,
     process.env.PRICE_PRO_YEARLY
   ].filter(Boolean)
-
   if (starterIds.includes(normalized)) return 'starter'
   if (coreIds.includes(normalized)) return 'core'
   if (proIds.includes(normalized)) return 'pro'
@@ -567,7 +637,6 @@ function resolveBillingPlanFromPriceId (priceId) {
 
 function resolveCheckoutPriceId (plan) {
   const normalized = String(plan || '').toLowerCase()
-
   const map = {
     starter:
       process.env.STRIPE_PRICE_STARTER || process.env.PRICE_STARTER || '',
@@ -587,44 +656,59 @@ function resolveCheckoutPriceId (plan) {
       process.env.PRICE_PRO_MONTHLY ||
       ''
   }
-
   return map[normalized] || ''
 }
 
 async function getLatestActiveSubscriptionForCustomer (customerId) {
   if (!stripe || !customerId) return null
-
   const subs = await stripe.subscriptions.list({
     customer: customerId,
     status: 'all',
     limit: 20
   })
-
   const activeSubs = subs.data
     .filter(sub =>
       ['active', 'trialing', 'past_due', 'incomplete'].includes(sub.status)
     )
     .sort((a, b) => b.created - a.created)
-
   return activeSubs[0] || null
 }
 
 // ---------------- RADAR INGEST ----------------
-app.post('/sweep', (req, res) => {
-  const event = req.body || {}
+const events = []
+const MAX_EVENTS = 200
 
+// Load recent radar events from DB on startup so feed survives server restarts
+async function loadRadarEventsFromDb () {
+  try {
+    const rows = await prisma.radarEvent.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: MAX_EVENTS
+    })
+    // rows are newest first — add to events array in order
+    for (const row of rows.reverse()) {
+      events.unshift(row.payload)
+    }
+    console.log(`[RADAR] Loaded ${rows.length} events from DB`)
+  } catch (err) {
+    console.error('[RADAR] Failed to load events from DB:', err.message)
+  }
+}
+
+loadRadarEventsFromDb()
+
+app.post('/sweep', async (req, res) => {
+  const event = req.body || {}
   const pair =
     event.pair ||
     event.symbol ||
     event.market ||
     event.instId ||
     event.instrument
-
   if (!pair) {
     console.log('[SWEEP BAD PAYLOAD]', event)
     return res.status(400).json({ error: 'Missing pair', received: event })
   }
-
   const saved = {
     id: event.id || `local_${Date.now()}`,
     timestampUtc:
@@ -636,13 +720,56 @@ app.post('/sweep', (req, res) => {
     pair
   }
 
+  // Persist to DB so events survive server restarts
+  // chartCandles excluded from DB to keep payload size manageable
+  try {
+    const { chartCandles, ...payloadForDb } = saved
+    await prisma.radarEvent.create({
+      data: {
+        pair: saved.pair || '',
+        timeframe: saved.timeframe || null,
+        eventType: saved.eventType || null,
+        directionBias: saved.directionBias || null,
+        sweepType: saved.sweepType || null,
+        session: saved.session || null,
+        timestampUtc: saved.timestampUtc || null,
+        entry: saved.entry != null ? Number(saved.entry) : null,
+        stop: saved.stop != null ? Number(saved.stop) : null,
+        tp1: saved.tp1 != null ? Number(saved.tp1) : null,
+        tp2: saved.tp2 != null ? Number(saved.tp2) : null,
+        rr1: saved.rr1 != null ? Number(saved.rr1) : null,
+        rr2: saved.rr2 != null ? Number(saved.rr2) : null,
+        botConfidence:
+          saved.botConfidence != null ? Number(saved.botConfidence) : null,
+        tradeState: saved.tradeState || null,
+        pattern: saved.pattern || null,
+        payload: payloadForDb
+      }
+    })
+
+    // Trim old DB records — keep last 500
+    const count = await prisma.radarEvent.count()
+    if (count > 500) {
+      const oldest = await prisma.radarEvent.findMany({
+        orderBy: { createdAt: 'asc' },
+        take: count - 500,
+        select: { id: true }
+      })
+      await prisma.radarEvent.deleteMany({
+        where: { id: { in: oldest.map(r => r.id) } }
+      })
+    }
+  } catch (err) {
+    console.error('[RADAR] Failed to persist event:', err.message)
+    // Don't fail the request — memory store still works
+  }
+
   events.unshift(saved)
-  if (events.length > 200) events.pop()
-
+  if (events.length > MAX_EVENTS) events.pop()
   console.log('[SWEEP RECEIVED]', saved.pair, saved.eventType || 'UNKNOWN')
-
   res.json({ ok: true, event: saved })
 })
+
 // ---------------- AUTH ----------------
 const BETA_ACCESS_CODE = process.env.BETA_ACCESS_CODE || ''
 const BETA_FULL_ACCESS =
@@ -651,27 +778,18 @@ const BETA_FULL_ACCESS =
 app.post('/auth/register', async (req, res) => {
   try {
     const { email, password, betaCode } = req.body || {}
-
-    if (!email || !password) {
+    if (!email || !password)
       return res.status(400).json({ error: 'Email and password are required.' })
-    }
-
     const REQUIRE_BETA_CODE = false
-
     if (REQUIRE_BETA_CODE && (!betaCode || betaCode !== BETA_ACCESS_CODE)) {
       return res.status(403).json({ error: 'Invalid beta access code.' })
     }
-
     const existingUser = await prisma.user.findUnique({
       where: { email: String(email).toLowerCase().trim() }
     })
-
-    if (existingUser) {
+    if (existingUser)
       return res.status(409).json({ error: 'User already exists.' })
-    }
-
     const passwordHash = await bcrypt.hash(password, 10)
-
     const user = await prisma.user.create({
       data: {
         email: String(email).toLowerCase().trim(),
@@ -682,11 +800,9 @@ app.post('/auth/register', async (req, res) => {
         betaGrantedAt: new Date()
       }
     })
-
     const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
       expiresIn: '7d'
     })
-
     return res.json({
       ok: true,
       token,
@@ -698,10 +814,10 @@ app.post('/auth/register', async (req, res) => {
         isBetaUser: user.isBetaUser,
         featureFlags: {
           manualJournal: true,
-          aiReview: BETA_FULL_ACCESS ? true : false,
-          screenshotReview: BETA_FULL_ACCESS ? true : false,
-          export: BETA_FULL_ACCESS ? true : false,
-          deeperStats: BETA_FULL_ACCESS ? true : false
+          aiReview: BETA_FULL_ACCESS,
+          screenshotReview: BETA_FULL_ACCESS,
+          export: BETA_FULL_ACCESS,
+          deeperStats: BETA_FULL_ACCESS
         }
       }
     })
@@ -717,22 +833,14 @@ app.post('/login', async (req, res) => {
       .trim()
       .toLowerCase()
     const password = String(req.body.password || '')
-
-    if (!email || !password) {
+    if (!email || !password)
       return res.status(400).json({ error: 'Missing credentials' })
-    }
-
     const user = await prisma.user.findUnique({ where: { email } })
-
-    if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials' })
-    }
-
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' })
     if (!user.passwordHash) {
       console.error('User missing passwordHash:', user.email)
       return res.status(500).json({ error: 'User not initialized properly' })
     }
-
     let valid = false
     try {
       valid = await bcrypt.compare(password, user.passwordHash)
@@ -740,18 +848,14 @@ app.post('/login', async (req, res) => {
       console.error('bcrypt crash:', err)
       return res.status(500).json({ error: 'Auth failure' })
     }
-
-    if (!valid) {
-      return res.status(401).json({ error: 'Invalid credentials' })
-    }
-
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' })
     return res.json({
       token: signToken(user),
       user: {
         id: user.id,
         email: user.email,
         billingPlan: user.billingPlan || 'starter',
-        stripeStatus: user.stripeStatus || user.stripeStatus || '',
+        stripeStatus: user.stripeStatus || '',
         stripeCustomerId: user.stripeCustomerId || ''
       }
     })
@@ -763,25 +867,17 @@ app.post('/login', async (req, res) => {
 
 app.get('/me', requireAuth, async (req, res) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id }
-    })
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found.' })
-    }
-
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } })
+    if (!user) return res.status(404).json({ error: 'User not found.' })
     const hasProAccess =
       user.billingPlan === 'pro' ||
       user.billingPlan === 'pro_beta' ||
       user.billingPlan === 'core'
-
     const screenshotLimit = 5
     const screenshotRemaining = Math.max(
       0,
       screenshotLimit - (user.screenshotCount || 0)
     )
-
     return res.json({
       user: {
         id: user.id,
@@ -809,10 +905,8 @@ app.get('/me', requireAuth, async (req, res) => {
     return res.status(500).json({ error: 'Failed to load profile.' })
   }
 })
-// ---------------- RADAR ----------------
-const events = []
-const MAX_EVENTS = 300
 
+// ---------------- RADAR ----------------
 app.get('/events', (_req, res) => {
   res.json({ events })
 })
@@ -838,28 +932,21 @@ app.get('/test-sweep', (_req, res) => {
     rr1: 1.67,
     rr2: 3.33
   }
-
   events.unshift(fake)
   if (events.length > MAX_EVENTS) events.pop()
-
   res.json({ ok: true, fake })
 })
 
 // ---------------- AI REVIEW ----------------
 app.post('/ai-review', requireAuth, async (req, res) => {
   try {
-    if (!ENABLE_AI || !openai) {
+    if (!ENABLE_AI || !anthropic) {
       return res.status(503).json({ error: 'AI review is not enabled' })
     }
-
     const usage = canUseAiReview(req.user, AI_REVIEW_DAILY_LIMIT)
-
     if (!usage.allowed) {
-      return res.status(403).json({
-        error: 'Daily AI review limit reached'
-      })
+      return res.status(403).json({ error: 'Daily AI review limit reached' })
     }
-
     if (usage.reset) {
       await prisma.user.update({
         where: { id: req.user.id },
@@ -868,23 +955,16 @@ app.post('/ai-review', requireAuth, async (req, res) => {
           aiReviewReset: new Date(Date.now() + 24 * 60 * 60 * 1000)
         }
       })
-
       req.user.aiReviewCount = 0
       req.user.aiReviewReset = new Date(Date.now() + 24 * 60 * 60 * 1000)
     }
-
     const payload = req.body?.trade || req.body || {}
     const result = await runAiTradeReview(payload)
-
     await prisma.user.update({
       where: { id: req.user.id },
-      data: {
-        aiReviewCount: { increment: 1 }
-      }
+      data: { aiReviewCount: { increment: 1 } }
     })
-
     req.user.aiReviewCount = (req.user.aiReviewCount || 0) + 1
-
     return res.json({
       ok: true,
       ai: result,
@@ -899,6 +979,33 @@ app.post('/ai-review', requireAuth, async (req, res) => {
   }
 })
 
+// ---------------- TRADER DNA ----------------
+app.post('/trader-dna', requireAuth, async (req, res) => {
+  try {
+    if (!ENABLE_AI || !anthropic) {
+      return res.status(503).json({ error: 'AI not enabled' })
+    }
+    // Require at least 10 trades for meaningful DNA
+    const logs = await prisma.tradeLog.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+      take: 50
+    })
+    if (logs.length < 10) {
+      return res.status(400).json({
+        error: 'Not enough trades',
+        message: `You need at least 10 logged trades for Trader DNA. You have ${logs.length}.`,
+        tradesNeeded: 10 - logs.length
+      })
+    }
+    const dna = await runTraderDna(logs)
+    return res.json({ ok: true, dna, tradesAnalyzed: logs.length })
+  } catch (err) {
+    console.error('Trader DNA error:', err)
+    return res.status(500).json({ error: 'Trader DNA generation failed' })
+  }
+})
+
 // ---------------- LOGS ----------------
 app.get('/logs', requireAuth, async (req, res) => {
   try {
@@ -907,7 +1014,6 @@ app.get('/logs', requireAuth, async (req, res) => {
       orderBy: { createdAt: 'desc' },
       take: 100
     })
-
     return res.json({ logs })
   } catch (err) {
     console.error('Get logs error:', err)
@@ -918,38 +1024,23 @@ app.get('/logs', requireAuth, async (req, res) => {
 app.post('/logs', requireAuth, async (req, res) => {
   try {
     const payload = req.body || {}
-
     if (payload.screenshotUrl) {
       const usage = canUseScreenshot(req.user, 5)
-
-      if (!usage.allowed) {
-        return res.status(403).json({
-          error: 'Daily screenshot limit reached'
-        })
-      }
-
+      if (!usage.allowed)
+        return res.status(403).json({ error: 'Daily screenshot limit reached' })
       if (usage.reset) {
         const nextReset = new Date(Date.now() + 24 * 60 * 60 * 1000)
-
         await prisma.user.update({
           where: { id: req.user.id },
-          data: {
-            screenshotCount: 0,
-            screenshotReset: nextReset
-          }
+          data: { screenshotCount: 0, screenshotReset: nextReset }
         })
-
         req.user.screenshotCount = 0
         req.user.screenshotReset = nextReset
       }
-
       await prisma.user.update({
         where: { id: req.user.id },
-        data: {
-          screenshotCount: { increment: 1 }
-        }
+        data: { screenshotCount: { increment: 1 } }
       })
-
       req.user.screenshotCount = (req.user.screenshotCount || 0) + 1
     }
 
@@ -962,27 +1053,22 @@ app.post('/logs', requireAuth, async (req, res) => {
       payload.entry === ''
         ? null
         : parseNum(payload.entry, 0)
-
     const stopNum =
       payload.stop === null || payload.stop === undefined || payload.stop === ''
         ? null
         : parseNum(payload.stop, 0)
-
     const exitNum =
       payload.exit === null || payload.exit === undefined || payload.exit === ''
         ? null
         : parseNum(payload.exit, 0)
-
     const tp1Num =
       payload.tp1 === null || payload.tp1 === undefined || payload.tp1 === ''
         ? null
         : parseNum(payload.tp1, 0)
-
     const tp2Num =
       payload.tp2 === null || payload.tp2 === undefined || payload.tp2 === ''
         ? null
         : parseNum(payload.tp2, 0)
-
     const pnlNum =
       payload.pnl === null || payload.pnl === undefined || payload.pnl === ''
         ? null
@@ -990,10 +1076,8 @@ app.post('/logs', requireAuth, async (req, res) => {
 
     const risk =
       entryNum != null && stopNum != null ? Math.abs(entryNum - stopNum) : 0
-
     const rr1 =
       risk > 0 && tp1Num != null ? Math.abs(tp1Num - entryNum) / risk : null
-
     const rr2 =
       risk > 0 && tp2Num != null ? Math.abs(tp2Num - entryNum) / risk : null
 
@@ -1022,36 +1106,28 @@ app.post('/logs', requireAuth, async (req, res) => {
         sweepType: payload.sweepType || 'High Sweep',
         emaContext: payload.emaContext || '',
         leverage: parseNum(payload.leverage, 1),
-
         action: payload.action || 'Taken',
         planFollowed: payload.planFollowed || 'Yes',
         ruleBreak: payload.ruleBreak || 'None',
-
         disciplineScore: parseNum(payload.disciplineScore, 0),
         setupQuality: parseNum(payload.setupQuality, 0),
         emotionalPressure: parseNum(payload.emotionalPressure, 0),
         confidenceSelf: parseNum(payload.confidenceSelf, 0),
-
         outcome: payload.outcome || null,
         durationMinutes: parseNum(payload.durationMinutes, 0),
-
         entry: entryNum,
         stop: stopNum,
         pnl: pnlNum,
-
         notes: payload.notes || '',
         screenshotUrl: payload.screenshotUrl || '',
-
         linkedEventId: payload.linkedEventId || null,
         reclaimConfirmed: Boolean(payload.reclaimConfirmed),
-
         aiStatus: 'ready',
         aiScore: scorecard.aiScore,
         tradeScore: scorecard.tradeScore,
         aiGrade: scorecard.aiGrade,
         aiSummary: aiAnalysis.summary,
         aiCoachingNote: aiAnalysis.coachingTip,
-
         setupScore: scorecard.setupScore,
         executionScore: scorecard.executionScore,
         managementScore: scorecard.managementScore,
@@ -1062,12 +1138,11 @@ app.post('/logs', requireAuth, async (req, res) => {
         executionAssessment: aiAnalysis.executionAssessment,
         riskAssessment: aiAnalysis.riskAssessment,
         biasAlignment: aiAnalysis.biasAlignment,
-
         usedScreenshot: aiAnalysis.usedScreenshot
       }
     })
 
-    const reviewEmailPayload = {
+    sendTradeReviewEmail({
       pair: log.pair,
       timeframe: log.timeframe,
       directionBias: log.directionBias,
@@ -1079,11 +1154,7 @@ app.post('/logs', requireAuth, async (req, res) => {
       aiSummary: aiAnalysis.summary,
       aiCoachingNote: aiAnalysis.coachingTip,
       notes: log.notes
-    }
-
-    sendTradeReviewEmail(reviewEmailPayload).catch(err => {
-      console.error('[EMAIL] trade review failed:', err.message)
-    })
+    }).catch(err => console.error('[EMAIL] trade review failed:', err.message))
 
     return res.json({
       log,
@@ -1096,42 +1167,51 @@ app.post('/logs', requireAuth, async (req, res) => {
     })
   } catch (err) {
     console.error('Create log error:', err)
-    return res.status(500).json({
-      error: 'Failed to save log',
-      details: err.message
-    })
+    return res
+      .status(500)
+      .json({ error: 'Failed to save log', details: err.message })
+  }
+})
+
+// ---------------- BUG REPORT ----------------
+app.post('/bug-report', async (req, res) => {
+  try {
+    const payload = req.body || {}
+    console.log('[BUG REPORT]', payload)
+    if (resend && ALERT_FROM_EMAIL && ALERT_TO_EMAIL) {
+      await resend.emails.send({
+        from: ALERT_FROM_EMAIL,
+        to: ALERT_TO_EMAIL,
+        subject: `Bug Report — ${payload.selectedPair || 'Unknown'} — ${
+          payload.userEmail || 'Unknown'
+        }`,
+        html: `<pre>${JSON.stringify(payload, null, 2)}</pre>`
+      })
+    }
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error('[BUG REPORT ERROR]', err)
+    return res.status(500).json({ error: 'Failed to send bug report' })
   }
 })
 
 // ---------------- STRIPE ----------------
 app.post('/stripe/create-checkout-session', requireAuth, async (req, res) => {
   try {
-    if (!stripe) {
-      return res.status(500).json({ error: 'Stripe not configured' })
-    }
-
+    if (!stripe) return res.status(500).json({ error: 'Stripe not configured' })
     const plan = String(req.body.plan || 'pro').toLowerCase()
     const priceId = resolveCheckoutPriceId(plan)
-
-    if (!priceId) {
-      return res.status(400).json({
-        error: 'Missing Stripe price ID',
-        plan
-      })
-    }
-
+    if (!priceId)
+      return res.status(400).json({ error: 'Missing Stripe price ID', plan })
     const customerId = await getOrCreateStripeCustomer(req.user)
     const existingSub = await getLatestActiveSubscriptionForCustomer(customerId)
-
     if (existingSub) {
       const existingPriceId = existingSub.items?.data?.[0]?.price?.id || null
       const existingPlan = resolveBillingPlanFromPriceId(existingPriceId)
-
       const portal = await stripe.billingPortal.sessions.create({
         customer: customerId,
         return_url: `${APP_URL}/billing`
       })
-
       return res.status(409).json({
         error:
           existingPriceId === priceId
@@ -1141,7 +1221,6 @@ app.post('/stripe/create-checkout-session', requireAuth, async (req, res) => {
         portalUrl: portal.url
       })
     }
-
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customerId,
@@ -1151,12 +1230,8 @@ app.post('/stripe/create-checkout-session', requireAuth, async (req, res) => {
       allow_promotion_codes: true,
       billing_address_collection: 'auto',
       client_reference_id: req.user.id,
-      metadata: {
-        userId: req.user.id,
-        plan
-      }
+      metadata: { userId: req.user.id, plan }
     })
-
     return res.json({ url: session.url })
   } catch (err) {
     console.error('Create checkout session error:', err)
@@ -1167,14 +1242,11 @@ app.post('/stripe/create-checkout-session', requireAuth, async (req, res) => {
 app.post('/stripe/create-portal-session', requireAuth, async (req, res) => {
   try {
     if (!stripe) return res.status(500).json({ error: 'Stripe not configured' })
-
     const customerId = await getOrCreateStripeCustomer(req.user)
-
     const portal = await stripe.billingPortal.sessions.create({
       customer: customerId,
       return_url: `${APP_URL}/billing`
     })
-
     return res.json({ url: portal.url })
   } catch (err) {
     console.error('Create portal session error:', err)
@@ -1184,10 +1256,7 @@ app.post('/stripe/create-portal-session', requireAuth, async (req, res) => {
 
 app.post('/stripe/sync', requireAuth, async (req, res) => {
   try {
-    if (!stripe) {
-      return res.status(500).json({ error: 'Stripe not configured' })
-    }
-
+    if (!stripe) return res.status(500).json({ error: 'Stripe not configured' })
     if (!req.user.stripeCustomerId) {
       return res.json({
         ok: true,
@@ -1195,44 +1264,26 @@ app.post('/stripe/sync', requireAuth, async (req, res) => {
         billingPlan: req.user.billingPlan || 'starter'
       })
     }
-
     const subs = await stripe.subscriptions.list({
       customer: req.user.stripeCustomerId,
       status: 'all',
       limit: 20
     })
-
-    console.log('SYNC user:', req.user.id)
-    console.log('SYNC customer:', req.user.stripeCustomerId)
-    console.log(
-      'SYNC subscriptions:',
-      subs.data.map(sub => ({
-        id: sub.id,
-        status: sub.status,
-        created: sub.created,
-        price: sub.items?.data?.[0]?.price?.id
-      }))
-    )
-
     const activeSubs = subs.data
       .filter(sub =>
         ['active', 'trialing', 'past_due', 'incomplete'].includes(sub.status)
       )
       .sort((a, b) => b.created - a.created)
-
     const activeLike = activeSubs[0]
-
     if (!activeLike) {
       return res.json({
         ok: true,
         stripeStatus: req.user.stripeStatus || 'free',
         billingPlan: req.user.billingPlan || 'starter',
-        note: 'No active-like subscription found during sync; kept existing billing state.'
+        note: 'No active subscription found.'
       })
     }
-
     const priceId = activeLike.items?.data?.[0]?.price?.id || null
-
     await prisma.user.update({
       where: { id: req.user.id },
       data: {
@@ -1246,17 +1297,13 @@ app.post('/stripe/sync', requireAuth, async (req, res) => {
         isActive: ['active', 'trialing'].includes(activeLike.status || '')
       }
     })
-
-    const screenshotLimit = 5
-    const screenshotRemaining = Math.max(
-      0,
-      screenshotLimit - (user.screenshotCount || 0)
-    )
-
+    // BUG FIX: was 'user.screenshotCount' — should be 'req.user.screenshotCount'
+    const screenshotRemaining = Math.max(0, 5 - (req.user.screenshotCount || 0))
     return res.json({
       ok: true,
       stripeStatus: activeLike.status || req.user.stripeStatus || 'free',
-      billingPlan: resolveBillingPlanFromPriceId(priceId)
+      billingPlan: resolveBillingPlanFromPriceId(priceId),
+      screenshotRemaining
     })
   } catch (err) {
     console.error('Stripe sync error:', err)

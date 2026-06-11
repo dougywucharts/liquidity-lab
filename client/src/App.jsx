@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { createChart, CandlestickSeries, LineSeries } from "lightweight-charts";
 import BillingPage from "./BillingPage.jsx";
+import MembersVault from "./MembersVault.jsx";
 
 // ─── Mobile responsive styles injected globally ──────────────────────────────
 const mobileCSS = `
@@ -622,9 +623,21 @@ function SmartTicker({ items, onSelect }) {
             padding: "10px 16px",
             fontSize: 12,
             color: palette.textSoft,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
           }}
         >
-          Waiting for high-confidence sweeps…
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "rgba(74,222,128,0.5)",
+              display: "inline-block",
+            }}
+          />
+          Radar Active — Scanning markets for high-confidence sweeps
         </div>
       </div>
     );
@@ -769,8 +782,8 @@ function SessionClockWidget() {
       tzLabel: "TKY",
       utcLabel: "UTC+9",
       timeZone: "Asia/Tokyo",
-      localPrimeStart: 20,
-      localPrimeEnd: 23,
+      localPrimeStart: 9,
+      localPrimeEnd: 12,
     },
   ];
 
@@ -879,8 +892,8 @@ function SessionClockWidget() {
               </span>
             </div>
             <div style={{ fontSize: 11, color: palette.textSoft }}>
-              Prime: {session.localPrimeStart}:00–{session.localPrimeEnd}:00
-              local
+              Prime: {session.localPrimeStart}:00–{session.localPrimeEnd}:00{" "}
+              {session.tzLabel}
             </div>
           </div>
         );
@@ -1208,6 +1221,19 @@ function AiReviewPanel({ entry, liveReview, loading, locked }) {
 
 function LightweightExecutionChart({ event }) {
   const ref = useRef(null);
+  // Stable key: only rebuild chart when the actual candle data changes
+  // Prevents reset on every 4s poll cycle (parent re-renders with new object ref)
+  const candleKey = useMemo(() => {
+    if (!event?.chartCandles?.length) return null;
+    const last = event.chartCandles[event.chartCandles.length - 1];
+    return `${event.id || event.pair}_${last?.time}_${event.chartCandles.length}`;
+  }, [
+    event?.id,
+    event?.pair,
+    event?.chartCandles?.length,
+    event?.chartCandles?.[event?.chartCandles?.length - 1]?.time,
+  ]);
+
   useEffect(() => {
     if (!ref.current || !event?.chartCandles?.length) return;
     ref.current.innerHTML = "";
@@ -1222,6 +1248,18 @@ function LightweightExecutionChart({ event }) {
       width: ref.current.clientWidth,
       height: ref.current.clientHeight,
     });
+    // Auto-detect precision from the price data so small coins show enough decimals
+    const samplePrice = event.chartCandles[0]?.close || 1;
+    const precision =
+      samplePrice >= 100
+        ? 2
+        : samplePrice >= 1
+          ? 4
+          : samplePrice >= 0.01
+            ? 5
+            : 6;
+    const minMove = Math.pow(10, -precision);
+
     const candles = chart.addSeries(CandlestickSeries, {
       upColor: "#22c55e",
       downColor: "#ef4444",
@@ -1229,6 +1267,7 @@ function LightweightExecutionChart({ event }) {
       borderDownColor: "#ef4444",
       wickUpColor: "#22c55e",
       wickDownColor: "#ef4444",
+      priceFormat: { type: "price", precision, minMove },
     });
     candles.setData(event.chartCandles);
     const firstTime = event.chartCandles[0].time;
@@ -1241,6 +1280,7 @@ function LightweightExecutionChart({ event }) {
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
+        priceFormat: { type: "price", precision, minMove },
       });
       line.setData([
         { time: firstTime, value: Number(value) },
@@ -1279,7 +1319,7 @@ function LightweightExecutionChart({ event }) {
       window.removeEventListener("resize", resize);
       chart.remove();
     };
-  }, [event]);
+  }, [candleKey]); // Only rebuilds when candle data actually changes
   return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
 }
 
@@ -1911,6 +1951,7 @@ export default function AppPreBeta() {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [logMode, setLogMode] = useState("event");
+  const [showAdvancedForm, setShowAdvancedForm] = useState(false);
   const [showInsights, setShowInsights] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(
@@ -2792,6 +2833,18 @@ export default function AppPreBeta() {
     );
   }
 
+  if (activeTab === "vault") {
+    return (
+      <div style={styles.app}>
+        <MembersVault
+          onBack={() => setActiveTab("dashboard")}
+          currentUser={currentUser}
+          featureFlags={featureFlags}
+        />
+      </div>
+    );
+  }
+
   if (activeTab === "billing") {
     return (
       <div style={styles.app}>
@@ -2806,84 +2859,213 @@ export default function AppPreBeta() {
     <div style={styles.app}>
       <MobileStyles />
       <div style={styles.shell} className="llab-shell">
-        {/* TOP BAR */}
-        <div style={styles.topbar}>
-          <div style={styles.topbarRow}>
-            <div style={styles.brandWrap}>
-              <div style={styles.brandIcon}>ROS</div>
-              <div>
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: palette.textDim,
-                    letterSpacing: 3,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Red October Systems
-                </div>
-                <div
-                  style={{ fontSize: 24, fontWeight: 900 }}
-                  className="llab-brand-title"
-                >
-                  Liquidity Lab
-                </div>
-              </div>
-            </div>
+        {/* TOP BAR — slim sticky nav matching vault style */}
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 100,
+            borderBottom: `1px solid ${palette.border}`,
+            background: "rgba(3,6,11,0.92)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            display: "flex",
+            alignItems: "center",
+            height: 52,
+            gap: 0,
+            margin: "-14px -16px 0",
+            padding: "0 16px",
+          }}
+        >
+          {/* Brand */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              paddingRight: 20,
+              borderRight: `1px solid ${palette.border}`,
+              height: "100%",
+              flexShrink: 0,
+            }}
+          >
             <div
               style={{
-                display: "flex",
-                gap: 8,
-                flexWrap: "wrap",
-                alignItems: "center",
+                ...styles.brandIcon,
+                width: 32,
+                height: 32,
+                borderRadius: 10,
+                fontSize: 12,
               }}
-              className="llab-topbar-buttons"
             >
-              <Pill tone={propStatus.tone}>{propStatus.status}</Pill>
-              <Pill tone="neutral">
-                {(currentUser?.billingPlan || "starter").toUpperCase()}
-              </Pill>
-              {aiRemaining != null && (
-                <Pill tone="gold">{aiRemaining} AI left</Pill>
-              )}
-              <button
-                style={styles.button}
-                onClick={() => setActiveTab("billing")}
-                type="button"
-              >
-                Billing
-              </button>
-              <button
-                style={styles.button}
-                onClick={() => window.location.reload()}
-                type="button"
-              >
-                Refresh
-              </button>
-              <button
-                style={{
-                  ...styles.button,
-                  border: "1px solid rgba(239,68,68,0.35)",
-                  color: "#f87171",
-                }}
-                onClick={reportIssue}
-                type="button"
-              >
-                Report Issue
-              </button>
-              <button
-                style={styles.button}
-                onClick={() => {
-                  localStorage.removeItem("token");
-                  localStorage.removeItem("liquidity_lab_token");
-                  setIsAuthenticated(false);
-                  setCurrentUser(null);
-                  setActiveTab("login");
-                }}
-              >
-                Logout
-              </button>
+              ROS
             </div>
+            <div>
+              <div
+                style={{
+                  fontSize: 9,
+                  color: palette.textDim,
+                  letterSpacing: 2.5,
+                  textTransform: "uppercase",
+                }}
+              >
+                Red October Systems
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 900, lineHeight: 1.1 }}>
+                Liquidity Lab
+              </div>
+            </div>
+          </div>
+
+          {/* Status pills */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "0 16px",
+              borderRight: `1px solid ${palette.border}`,
+              height: "100%",
+              flexShrink: 0,
+            }}
+          >
+            <Pill tone={propStatus.tone}>{propStatus.status}</Pill>
+            <Pill tone="neutral">
+              {(currentUser?.billingPlan || "starter").toUpperCase()}
+            </Pill>
+            {aiRemaining != null && <Pill tone="gold">{aiRemaining} AI</Pill>}
+          </div>
+
+          {/* Nav links */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flex: 1,
+              height: "100%",
+              padding: "0 8px",
+            }}
+          >
+            {[
+              {
+                label: "Dashboard",
+                action: () => setActiveTab("dashboard"),
+                active: activeTab === "dashboard",
+              },
+              {
+                label: "Members Vault",
+                action: () => setActiveTab("vault"),
+                active: activeTab === "vault",
+                gold: true,
+              },
+              {
+                label: "Billing",
+                action: () => setActiveTab("billing"),
+                active: activeTab === "billing",
+              },
+            ].map((item) => (
+              <button
+                key={item.label}
+                onClick={item.action}
+                type="button"
+                style={{
+                  appearance: "none",
+                  border: "none",
+                  background: "none",
+                  color: item.gold
+                    ? "#f6c453"
+                    : item.active
+                      ? palette.text
+                      : palette.textDim,
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: item.active ? 800 : 600,
+                  padding: "0 14px",
+                  height: "100%",
+                  borderBottom: item.active
+                    ? `2px solid ${item.gold ? "#f6c453" : palette.accent}`
+                    : "2px solid transparent",
+                  transition: "all 0.15s ease",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Right actions */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              paddingLeft: 12,
+              borderLeft: `1px solid ${palette.border}`,
+              height: "100%",
+              flexShrink: 0,
+            }}
+          >
+            <button
+              onClick={() => window.location.reload()}
+              type="button"
+              style={{
+                appearance: "none",
+                border: "none",
+                background: "none",
+                color: palette.textDim,
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "0 10px",
+                height: "100%",
+                transition: "color 0.15s",
+              }}
+            >
+              Refresh
+            </button>
+            <button
+              onClick={reportIssue}
+              type="button"
+              style={{
+                appearance: "none",
+                border: "none",
+                background: "none",
+                color: "#f87171",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "0 10px",
+                height: "100%",
+                transition: "color 0.15s",
+              }}
+            >
+              Report Issue
+            </button>
+            <button
+              onClick={() => {
+                localStorage.removeItem("token");
+                localStorage.removeItem("liquidity_lab_token");
+                setIsAuthenticated(false);
+                setCurrentUser(null);
+                setActiveTab("login");
+              }}
+              type="button"
+              style={{
+                appearance: "none",
+                border: "none",
+                background: "none",
+                color: palette.textDim,
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "0 10px",
+                height: "100%",
+                transition: "color 0.15s",
+              }}
+            >
+              Logout
+            </button>
           </div>
         </div>
 
@@ -2901,6 +3083,76 @@ export default function AppPreBeta() {
 
         <SessionClockWidget />
         <StatsBar decisions={loggedDecisions} />
+
+        {/* TRADER DNA™ TEASER — upsell for non-pro or pro hook to vault */}
+        <div
+          onClick={() => setActiveTab("vault")}
+          style={{
+            borderRadius: 16,
+            border: "1px solid rgba(246,196,83,0.25)",
+            background:
+              "linear-gradient(135deg,rgba(246,196,83,0.06),rgba(5,8,14,0.95))",
+            padding: "12px 18px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            cursor: "pointer",
+            transition: "all 0.2s ease",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <span style={{ fontSize: 22 }}>🧬</span>
+            <div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 900,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                Trader DNA
+                <sup style={{ fontSize: 9, color: "#f6c453", fontWeight: 900 }}>
+                  ™
+                </sup>
+                <span
+                  style={{
+                    fontSize: 10,
+                    padding: "2px 7px",
+                    borderRadius: 999,
+                    background: "rgba(96,165,250,0.12)",
+                    border: "1px solid rgba(96,165,250,0.24)",
+                    color: "#60a5fa",
+                    fontWeight: 800,
+                  }}
+                >
+                  Claude-Reviewed™
+                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "rgba(244,247,251,0.46)",
+                  marginTop: 2,
+                }}
+              >
+                AI builds your personal trading profile from every logged trade
+              </div>
+            </div>
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "#f6c453",
+              fontWeight: 800,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate Profile →
+          </div>
+        </div>
 
         {/* MAIN GRID */}
         <div style={styles.mainGrid} className="llab-main-grid">
@@ -3087,9 +3339,28 @@ export default function AppPreBeta() {
                 })
               ) : (
                 <div
-                  style={{ color: palette.textSoft, fontSize: 13, padding: 8 }}
+                  style={{
+                    display: "grid",
+                    placeItems: "center",
+                    height: 120,
+                    gap: 8,
+                    opacity: 0.5,
+                  }}
                 >
-                  No live events yet.
+                  <div style={{ fontSize: 24 }}>📡</div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: palette.textSoft,
+                      textAlign: "center",
+                    }}
+                  >
+                    No live signals
+                    <br />
+                    <span style={{ fontSize: 11, color: palette.textDim }}>
+                      Bot scanning markets…
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
@@ -3116,12 +3387,46 @@ export default function AppPreBeta() {
             >
               {selectedEvent?.chartCandles?.length ? (
                 <LightweightExecutionChart event={selectedEvent} />
-              ) : (
+              ) : selectedEvent ? (
                 <iframe
                   key={chartReloadKey}
                   src={chartSrc}
                   style={{ width: "100%", height: "100%", border: "none" }}
                 />
+              ) : (
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "grid",
+                    placeItems: "center",
+                    background: "rgba(5,8,14,0.95)",
+                  }}
+                >
+                  <div
+                    style={{ textAlign: "center", display: "grid", gap: 12 }}
+                  >
+                    <div style={{ fontSize: 32, opacity: 0.3 }}>📡</div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: palette.textDim,
+                        fontWeight: 700,
+                      }}
+                    >
+                      No signal selected
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: palette.textDim,
+                        opacity: 0.6,
+                      }}
+                    >
+                      Click a radar card to load the chart
+                    </div>
+                  </div>
+                </div>
               )}
               <div
                 style={{
@@ -3277,7 +3582,11 @@ export default function AppPreBeta() {
                 <MiniBox label="Pair" value={selectedEvent?.pair || "—"} />
                 <MiniBox
                   label="Confidence"
-                  value={`${Math.round((selectedEvent?.botConfidence || 0) * 100)}%`}
+                  value={
+                    selectedEvent
+                      ? `${Math.round((selectedEvent?.botConfidence || 0) * 100)}%`
+                      : "—"
+                  }
                   subtext={selectedEvent?.sweepType || "—"}
                 />
               </div>
@@ -3727,129 +4036,164 @@ export default function AppPreBeta() {
               </FieldLabel>
             </div>
 
-            <SectionLabel>Execution Details</SectionLabel>
-            <div
+            {/* Execution Details — collapsible advanced section */}
+            <button
+              type="button"
+              onClick={() => setShowAdvancedForm((p) => !p)}
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4,minmax(0,1fr))",
-                gap: 10,
-                marginBottom: 16,
+                appearance: "none",
+                border: `1px solid ${palette.borderSoft}`,
+                borderRadius: 10,
+                padding: "7px 14px",
+                background: "rgba(255,255,255,0.03)",
+                color: palette.textDim,
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: 0.8,
+                textTransform: "uppercase",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 12,
               }}
-              className="llab-form-4col"
             >
-              <FieldLabel label="Sweep Type">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.sweepType}
-                  onChange={(e) => updateDecision("sweepType", e.target.value)}
-                >
-                  {["High Sweep", "Low Sweep", "Equal Highs", "Equal Lows"].map(
-                    (v) => (
+              <span style={{ fontSize: 10 }}>
+                {showAdvancedForm ? "▼" : "▶"}
+              </span>
+              {showAdvancedForm ? "Hide" : "Show"} Execution Details
+            </button>
+            {showAdvancedForm && (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4,minmax(0,1fr))",
+                  gap: 10,
+                  marginBottom: 16,
+                }}
+                className="llab-form-4col"
+              >
+                <FieldLabel label="Sweep Type">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.sweepType}
+                    onChange={(e) =>
+                      updateDecision("sweepType", e.target.value)
+                    }
+                  >
+                    {[
+                      "High Sweep",
+                      "Low Sweep",
+                      "Equal Highs",
+                      "Equal Lows",
+                    ].map((v) => (
                       <option key={v}>{v}</option>
-                    ),
-                  )}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="EMA Context">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.emaContext}
-                  onChange={(e) => updateDecision("emaContext", e.target.value)}
-                >
-                  {[
-                    "EMA99 Rejection",
-                    "EMA99 Support",
-                    "EMA25 Reclaim",
-                    "None",
-                  ].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Action">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.action}
-                  onChange={(e) => updateDecision("action", e.target.value)}
-                >
-                  {["Taken", "Passed"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Timing">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.timing}
-                  onChange={(e) => updateDecision("timing", e.target.value)}
-                >
-                  {["On Confirmation", "Early", "Chase Entry"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Execution Type">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.executionType}
-                  onChange={(e) =>
-                    updateDecision("executionType", e.target.value)
-                  }
-                >
-                  {[
-                    "Limit Retest",
-                    "Market Confirmation",
-                    "Breakdown Entry",
-                  ].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="HTF Bias">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.htfBias}
-                  onChange={(e) => updateDecision("htfBias", e.target.value)}
-                >
-                  {["Bearish", "Bullish", "Neutral"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Entry Trigger">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.entryTrigger}
-                  onChange={(e) =>
-                    updateDecision("entryTrigger", e.target.value)
-                  }
-                >
-                  {["Reclaim Failure", "Breakdown", "Wick Rejection"].map(
-                    (v) => (
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="EMA Context">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.emaContext}
+                    onChange={(e) =>
+                      updateDecision("emaContext", e.target.value)
+                    }
+                  >
+                    {[
+                      "EMA99 Rejection",
+                      "EMA99 Support",
+                      "EMA25 Reclaim",
+                      "None",
+                    ].map((v) => (
                       <option key={v}>{v}</option>
-                    ),
-                  )}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Liquidity Level">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.liquidityLevel}
-                  onChange={(e) =>
-                    updateDecision("liquidityLevel", e.target.value)
-                  }
-                >
-                  {[
-                    "Range High",
-                    "Range Low",
-                    "Session High",
-                    "Session Low",
-                  ].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-            </div>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Action">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.action}
+                    onChange={(e) => updateDecision("action", e.target.value)}
+                  >
+                    {["Taken", "Passed"].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Timing">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.timing}
+                    onChange={(e) => updateDecision("timing", e.target.value)}
+                  >
+                    {["On Confirmation", "Early", "Chase Entry"].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Execution Type">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.executionType}
+                    onChange={(e) =>
+                      updateDecision("executionType", e.target.value)
+                    }
+                  >
+                    {[
+                      "Limit Retest",
+                      "Market Confirmation",
+                      "Breakdown Entry",
+                    ].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="HTF Bias">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.htfBias}
+                    onChange={(e) => updateDecision("htfBias", e.target.value)}
+                  >
+                    {["Bearish", "Bullish", "Neutral"].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Entry Trigger">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.entryTrigger}
+                    onChange={(e) =>
+                      updateDecision("entryTrigger", e.target.value)
+                    }
+                  >
+                    {["Reclaim Failure", "Breakdown", "Wick Rejection"].map(
+                      (v) => (
+                        <option key={v}>{v}</option>
+                      ),
+                    )}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Liquidity Level">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.liquidityLevel}
+                    onChange={(e) =>
+                      updateDecision("liquidityLevel", e.target.value)
+                    }
+                  >
+                    {[
+                      "Range High",
+                      "Range Low",
+                      "Session High",
+                      "Session Low",
+                    ].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+              </div>
+            )}
 
             <SectionLabel>Price Levels</SectionLabel>
             <div
@@ -4051,12 +4395,32 @@ export default function AppPreBeta() {
                 gap: 10,
                 flexWrap: "wrap",
                 alignItems: "center",
-                marginTop: 12,
+                marginTop: 16,
               }}
             >
+              <button
+                style={{
+                  ...styles.primaryButton,
+                  fontSize: 15,
+                  padding: "12px 28px",
+                  letterSpacing: 0.3,
+                }}
+                type="button"
+                onClick={saveDecision}
+              >
+                Log Trade / Apply Result
+              </button>
+              <button
+                style={{ ...styles.button, fontSize: 12 }}
+                type="button"
+                onClick={runAiReviewNow}
+              >
+                {aiReviewLoading ? "Running AI…" : "🤖 Run AI Review"}
+              </button>
               <label
                 style={{
                   ...styles.button,
+                  fontSize: 12,
                   display: "inline-flex",
                   alignItems: "center",
                   cursor: "pointer",
@@ -4073,20 +4437,6 @@ export default function AppPreBeta() {
               {decisionForm.screenshot && (
                 <Pill tone="long">Screenshot ready</Pill>
               )}
-              <button
-                style={styles.primaryButton}
-                type="button"
-                onClick={saveDecision}
-              >
-                Log Trade / Apply Result
-              </button>
-              <button
-                style={styles.button}
-                type="button"
-                onClick={runAiReviewNow}
-              >
-                {aiReviewLoading ? "Running AI…" : "Run AI Review"}
-              </button>
             </div>
           </div>
         </div>
@@ -4098,7 +4448,9 @@ export default function AppPreBeta() {
               <div style={{ fontWeight: 900, fontSize: 15 }}>
                 Recent Entries
               </div>
-              <div style={styles.subtext}>Click a card to expand AI review</div>
+              <div style={styles.subtext}>
+                Click any card to expand · AI grade · Quick close open trades
+              </div>
             </div>
             <button
               style={{ ...styles.button, fontSize: 12 }}

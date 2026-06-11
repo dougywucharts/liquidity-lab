@@ -94,7 +94,7 @@ OFF_HOURS_MIN_STRENGTH = 60  # [FILTER 9] DETECTED skipped below this off-hours
 STOP_BUFFER_PCT = 0.0015
 TP1_BUFFER_PCT = 0.0005
 TP2_BUFFER_PCT = 0.0010
-MIN_RR_TO_ALERT = 0.0
+MIN_RR_TO_ALERT = 1.5  # TP2 must be >= 1.5R to fire any alert
 
 # Cooldowns
 DETECTED_COOLDOWN = 240  # [FILTER 7] was 30
@@ -109,7 +109,7 @@ DOUBLE_SWEEP_MAX_BARS = 12
 DOUBLE_SWEEP_LEVEL_TOL = 0.0015
 DOUBLE_SWEEP_DIR_REQUIRED = True
 
-CHART_WINDOW = 36
+CHART_WINDOW = 120  # 2 hours on 1m — enough to see sweep origin and equal highs/lows
 
 # =========================================================
 # DEBUG / MONITORING
@@ -577,24 +577,55 @@ def build_rr_plan(direction, trigger_df, map_levels, sweep_level, reclaim_level=
     local_high = float(recent["high"].max())
     local_low = float(recent["low"].min())
 
+    # ATR-scaled TP buffer — replaces fixed TP1_BUFFER_PCT/TP2_BUFFER_PCT
+    # Ensures meaningful separation between entry and TP levels on all price ranges
+    # Small coins (DOGE $0.08): ATR ~0.0003, buffer = 0.00015 — visible on chart
+    # Large coins (BTC $60k): ATR ~200, buffer = 100 — meaningful dollar distance
+    atr_tp1_buffer = atr * 0.50  # TP1 pulls back from local extreme by 0.5x ATR
+    atr_tp2_buffer = atr * 0.25  # TP2 extends beyond local extreme by 0.25x ATR
+
     if direction == "bullish":
         entry = base_level + retest_offset
         stop = base_level - buffer
-        tp1 = local_high * (1 - TP1_BUFFER_PCT)
-        tp2 = local_high * (1 + TP2_BUFFER_PCT)
+        risk = entry - stop
+
+        # TP1 = local high minus ATR buffer (conservative, high probability)
+        tp1 = local_high - atr_tp1_buffer
+        # TP2 = local high plus ATR buffer (extension target)
+        tp2 = local_high + atr_tp2_buffer
+
+        # Fallback: if local high is too close, use RR-based targets
         if tp1 <= entry:
-            tp1 = entry + (entry - stop) * 1.25
+            tp1 = entry + risk * 1.5
         if tp2 <= tp1:
-            tp2 = entry + (entry - stop) * 2.0
+            tp2 = entry + risk * 2.5
+        # Minimum separation — aggressive for small coins
+        # TP1 must be at least 2R from entry, TP2 at least 1.5R beyond TP1
+        if (tp1 - entry) < risk * 2.0:
+            tp1 = entry + risk * 2.0
+        if (tp2 - tp1) < risk * 1.5:
+            tp2 = tp1 + risk * 1.5
+
     else:
         entry = base_level - retest_offset
         stop = base_level + buffer
-        tp1 = local_low * (1 + TP1_BUFFER_PCT)
-        tp2 = local_low * (1 - TP2_BUFFER_PCT)
+        risk = stop - entry
+
+        # TP1 = local low plus ATR buffer (conservative, high probability)
+        tp1 = local_low + atr_tp1_buffer
+        # TP2 = local low minus ATR buffer (extension target)
+        tp2 = local_low - atr_tp2_buffer
+
+        # Fallback: if local low is too close, use RR-based targets
         if tp1 >= entry:
-            tp1 = entry - (stop - entry) * 1.25
+            tp1 = entry - risk * 2.0
         if tp2 >= tp1:
-            tp2 = entry - (stop - entry) * 2.0
+            tp2 = entry - risk * 3.5
+        # Minimum separation — aggressive for small coins
+        if (entry - tp1) < risk * 2.0:
+            tp1 = entry - risk * 2.0
+        if (tp1 - tp2) < risk * 1.5:
+            tp2 = tp1 - risk * 1.5
 
     rr1, rr2 = calc_rr(direction, entry, stop, tp1, tp2)
 
@@ -1197,6 +1228,70 @@ def clean_symbol_for_radar(symbol: str) -> str:
     return symbol.replace(":USDT", "")
 
 
+def _build_chart_candles(df, window=None):
+    """
+    Convert the last N rows of a trigger_df into lightweight-charts candle format.
+    Each candle: { time (Unix seconds int), open, high, low, close }
+    Volume is excluded — lightweight-charts CandlestickSeries doesn't use it.
+    """
+    if window is None:
+        window = CHART_WINDOW
+    try:
+        recent = df.tail(window).copy()
+        candles = []
+        for ts, row in recent.iterrows():
+            try:
+                # lightweight-charts wants Unix timestamp in seconds (integer)
+                unix_ts = int(ts.timestamp())
+                candles.append(
+                    {
+                        "time": unix_ts,
+                        "open": round(float(row["open"]), 8),
+                        "high": round(float(row["high"]), 8),
+                        "low": round(float(row["low"]), 8),
+                        "close": round(float(row["close"]), 8),
+                    }
+                )
+            except Exception:
+                continue
+        return candles if candles else None
+    except Exception:
+        return None
+
+
+def pattern_contradicts_direction(pattern, direction):
+    """
+    Returns True if the detected pattern contradicts the sweep direction.
+    A contradiction means the pattern is a stronger signal AGAINST the trade
+    than the sweep is FOR it — block the alert.
+
+    Bearish-only patterns (should never fire on a bullish sweep):
+      Failed Reclaim, Hook (bearish), Sweep Watch (no follow-through)
+
+    Bullish-only patterns (should never fire on a bearish sweep):
+      (Hook and Sweep Watch can go either way — only block on Failed Reclaim)
+    """
+    if pattern is None:
+        return False
+
+    p = pattern.strip().lower()
+
+    if direction == "bullish":
+        # A Failed Reclaim on a bullish sweep means price swept the low
+        # but then FAILED to close back above it — the move is bearish
+        # Block it entirely
+        if "failed reclaim" in p:
+            return True
+
+    if direction == "bearish":
+        # A Failed Reclaim on a bearish sweep means price swept the high
+        # but then FAILED to close back below it — the move is bullish
+        if "failed reclaim" in p:
+            return True
+
+    return False
+
+
 def post_sweep_to_radar(
     symbol,
     event_type,
@@ -1233,6 +1328,16 @@ def post_sweep_to_radar(
             direction_bias = "Neutral"
 
         pattern = detect_pattern(direction, df, setup_level)
+
+        # Block alerts where the detected pattern contradicts the sweep direction
+        # e.g. a Failed Reclaim on a bullish sweep = price didn't actually reclaim
+        if pattern_contradicts_direction(pattern, direction):
+            logger.info(
+                f"[CONTRADICTION BLOCK] {symbol} {direction} blocked — "
+                f"pattern '{pattern}' contradicts direction"
+            )
+            return
+
         trade_state, distance_from_entry_pct = trade_viability(
             direction,
             current_price,
@@ -1286,6 +1391,7 @@ def post_sweep_to_radar(
             "tp2": None if plan["tp2"] is None else float(plan["tp2"]),
             "rr1": None if plan["rr_tp1"] is None else float(plan["rr_tp1"]),
             "rr2": None if plan["rr_tp2"] is None else float(plan["rr_tp2"]),
+            "chartCandles": _build_chart_candles(df),
         }
 
         for url in BRIDGE_URLS:
@@ -1714,7 +1820,10 @@ def main_loop():
                     if variant == "double_sweep" and (
                         now - last_double.get(symbol, 0) > DOUBLE_SWEEP_COOLDOWN
                     ):
-                        if plan["rr_tp1"] is None or plan["rr_tp1"] >= MIN_RR_TO_ALERT:
+                        if (
+                            plan["rr_tp2"] is not None
+                            and plan["rr_tp2"] >= MIN_RR_TO_ALERT
+                        ):
                             print(
                                 f"[DOUBLE SWEEP] {symbol} {sweep_dir} strength={strength}"
                             )
@@ -1758,7 +1867,10 @@ def main_loop():
                     cooldown_ok = now - last_detected.get(symbol, 0) > DETECTED_COOLDOWN
 
                     if cooldown_ok and level_moved:
-                        if plan["rr_tp1"] is None or plan["rr_tp1"] >= MIN_RR_TO_ALERT:
+                        if (
+                            plan["rr_tp2"] is not None
+                            and plan["rr_tp2"] >= MIN_RR_TO_ALERT
+                        ):
                             print(
                                 f"[DETECTED] {symbol} {sweep_dir} "
                                 f"strength={strength} variant={variant}"
@@ -1856,7 +1968,10 @@ def main_loop():
                     if trigger_state == "reclaim" and (
                         now - last_reclaim.get(symbol, 0) > RECLAIM_COOLDOWN
                     ):
-                        if plan["rr_tp1"] is None or plan["rr_tp1"] >= MIN_RR_TO_ALERT:
+                        if (
+                            plan["rr_tp2"] is not None
+                            and plan["rr_tp2"] >= MIN_RR_TO_ALERT
+                        ):
                             scored = compute_institutional_score(
                                 strength,
                                 "RECLAIM",
@@ -2006,8 +2121,8 @@ def main_loop():
                         dbg("   [CONFIRM CHECK] True")
                         if now - last_confirmed.get(symbol, 0) > CONFIRMED_COOLDOWN:
                             if (
-                                plan["rr_tp1"] is None
-                                or plan["rr_tp1"] >= MIN_RR_TO_ALERT
+                                plan["rr_tp2"] is not None
+                                and plan["rr_tp2"] >= MIN_RR_TO_ALERT
                             ):
                                 scored = compute_institutional_score(
                                     strength,

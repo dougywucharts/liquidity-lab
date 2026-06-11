@@ -3,28 +3,30 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
 }
 
 model User {
-  id                 String     @id @default(cuid())
-  email              String     @unique
+  id                 String       @id @default(cuid())
+  email              String       @unique
   passwordHash       String
-  createdAt          DateTime   @default(now())
-  updatedAt          DateTime   @updatedAt
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
   logs               TradeLog[]
-  stripeCustomerId   String?    @unique
-  stripeSubId        String?    @unique
+  stripeCustomerId   String?      @unique
+  stripeSubId        String?      @unique
   stripePriceId      String?
-  billingStatus      String?    // active, trialing, past_due, canceled, unpaid, incomplete
-  billingPlan        String?    // starter, core, pro
+  stripeStatus       String?      // active, trialing, past_due, canceled, unpaid, incomplete
+  billingStatus      String?
+  billingPlan        String?      // starter, core, pro
   billingPeriodEnd   DateTime?
-  isActive           Boolean    @default(false)
-  isBetaUser         Boolean    @default(false)
+  isActive           Boolean      @default(false)
+  isBetaUser         Boolean      @default(false)
   betaGrantedAt      DateTime?
-  screenshotCount    Int        @default(0)
+  screenshotCount    Int          @default(0)
   screenshotReset    DateTime?
-  aiReviewCount      Int        @default(0)
+  aiReviewCount      Int          @default(0)
   aiReviewReset      DateTime?
 }
 
@@ -103,4 +105,38 @@ model TradeLog {
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+model RadarEvent {
+  id            String   @id @default(cuid())
+  createdAt     DateTime @default(now())
+
+  // Core signal fields — indexed for fast lookup
+  pair          String
+  timeframe     String?
+  eventType     String?
+  directionBias String?
+  sweepType     String?
+  session       String?
+  timestampUtc  String?
+
+  // Price levels
+  entry         Float?
+  stop          Float?
+  tp1           Float?
+  tp2           Float?
+  rr1           Float?
+  rr2           Float?
+
+  // Signal metadata
+  botConfidence Float?
+  tradeState    String?
+  pattern       String?
+
+  // Full payload stored as JSON for future use (analytics, AI archive)
+  payload       Json
+
+  @@index([createdAt])
+  @@index([pair, createdAt])
+  @@index([eventType, createdAt])
 }
