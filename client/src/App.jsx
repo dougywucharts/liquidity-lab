@@ -2023,6 +2023,22 @@ export default function AppPreBeta() {
   const [aiRemaining, setAiRemaining] = useState(null);
   const [aiReviewLoading, setAiReviewLoading] = useState(false);
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [registerForm, setRegisterForm] = useState({
+    email: "",
+    password: "",
+    confirm: "",
+  });
+  const [authTab, setAuthTab] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("register")
+        ? "register"
+        : "login";
+    } catch {
+      return "login";
+    }
+  });
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [propAccount, setPropAccount] = useState({
     presetId: "ftmo_like",
     accountSize: 50000,
@@ -2415,6 +2431,46 @@ export default function AppPreBeta() {
     }
   }
 
+  async function registerUser() {
+    if (!registerForm.email || !registerForm.password) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+    if (registerForm.password !== registerForm.confirm) {
+      setAuthError("Passwords don't match.");
+      return;
+    }
+    if (registerForm.password.length < 8) {
+      setAuthError("Password must be at least 8 characters.");
+      return;
+    }
+    try {
+      setAuthLoading(true);
+      setAuthError("");
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: registerForm.email.trim(),
+          password: registerForm.password,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Registration failed");
+      try {
+        localStorage.setItem("token", data.token || "");
+        localStorage.setItem("user", JSON.stringify(data.user || {}));
+      } catch {}
+      setIsAuthenticated(true);
+      setActiveTab("dashboard");
+      toast("Welcome to Liquidity Lab!", "success");
+    } catch (err) {
+      setAuthError(err.message || "Registration failed");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
   async function reportIssue() {
     try {
       const payload = {
@@ -2455,9 +2511,9 @@ export default function AppPreBeta() {
       } catch {}
       setIsAuthenticated(true);
       setActiveTab("dashboard");
-      toast("Logged in", "success");
+      toast("Welcome back!", "success");
     } catch (err) {
-      toast(err.message || "Login failed", "warn");
+      setAuthError(err.message || "Login failed");
     }
   }
 
@@ -2753,30 +2809,51 @@ export default function AppPreBeta() {
 
   if (!isAuthenticated) {
     return (
-      <div style={styles.app}>
+      <div
+        style={{
+          ...styles.app,
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          padding: 24,
+        }}
+      >
+        {/* Background glow */}
         <div
           style={{
-            ...styles.shell,
-            minHeight: "100vh",
-            display: "grid",
-            placeItems: "center",
+            position: "fixed",
+            inset: 0,
+            background:
+              "radial-gradient(ellipse 60% 40% at 50% 0%, rgba(239,68,68,0.12), transparent)",
+            pointerEvents: "none",
           }}
+        />
+
+        <div
+          style={{ width: "min(420px,100%)", position: "relative", zIndex: 1 }}
         >
-          <div
-            style={{
-              width: "min(400px,100%)",
-              border: `1px solid ${palette.border}`,
-              borderRadius: 24,
-              background: palette.panel,
-              padding: 24,
-              display: "grid",
-              gap: 16,
-              boxShadow: "0 16px 42px rgba(0,0,0,0.4)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={styles.brandIcon}>ROS</div>
-              <div>
+          {/* Brand */}
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
+              <div
+                style={{
+                  ...styles.brandIcon,
+                  width: 44,
+                  height: 44,
+                  borderRadius: 14,
+                  fontSize: 15,
+                }}
+              >
+                ROS
+              </div>
+              <div style={{ textAlign: "left" }}>
                 <div
                   style={{
                     fontSize: 10,
@@ -2787,46 +2864,294 @@ export default function AppPreBeta() {
                 >
                   Red October Systems
                 </div>
-                <div style={{ fontSize: 22, fontWeight: 900, marginTop: 2 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1 }}>
                   Liquidity Lab
                 </div>
               </div>
             </div>
             <div style={{ fontSize: 13, color: palette.textSoft }}>
-              Sign in to access journaling, AI review, and saved logs.
+              {authTab === "login"
+                ? "Sign in to your account"
+                : "Create your free account — no card required"}
             </div>
-            <div style={{ display: "grid", gap: 10 }}>
-              <input
-                style={fieldStyle}
-                placeholder="Email"
-                value={loginForm.email}
-                onChange={(e) =>
-                  setLoginForm((prev) => ({ ...prev, email: e.target.value }))
-                }
-              />
-              <input
-                style={fieldStyle}
-                placeholder="Password"
-                type="password"
-                value={loginForm.password}
-                onChange={(e) =>
-                  setLoginForm((prev) => ({
-                    ...prev,
-                    password: e.target.value,
-                  }))
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") loginUser();
-                }}
-              />
-            </div>
-            <button
-              style={styles.primaryButton}
-              type="button"
-              onClick={loginUser}
+          </div>
+
+          {/* Card */}
+          <div
+            style={{
+              border: `1px solid ${palette.border}`,
+              borderRadius: 22,
+              background: palette.panel,
+              overflow: "hidden",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
+            }}
+          >
+            {/* Tabs */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                borderBottom: `1px solid ${palette.border}`,
+              }}
             >
-              Sign In
-            </button>
+              {["login", "register"].map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => {
+                    setAuthTab(tab);
+                    setAuthError("");
+                  }}
+                  style={{
+                    appearance: "none",
+                    border: "none",
+                    padding: "14px",
+                    background: "none",
+                    color: authTab === tab ? palette.text : palette.textDim,
+                    fontWeight: authTab === tab ? 800 : 600,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    borderBottom:
+                      authTab === tab
+                        ? `2px solid ${palette.accent}`
+                        : "2px solid transparent",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {tab === "login" ? "Sign In" : "Create Account"}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ padding: 24, display: "grid", gap: 14 }}>
+              {authError && (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 12,
+                    background: "rgba(239,68,68,0.1)",
+                    border: "1px solid rgba(239,68,68,0.25)",
+                    color: "#f87171",
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  {authError}
+                </div>
+              )}
+
+              {authTab === "login" ? (
+                <>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <FieldLabel label="Email">
+                      <input
+                        style={fieldStyle}
+                        placeholder="you@example.com"
+                        type="email"
+                        value={loginForm.email}
+                        onChange={(e) => {
+                          setLoginForm((prev) => ({
+                            ...prev,
+                            email: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                      />
+                    </FieldLabel>
+                    <FieldLabel label="Password">
+                      <input
+                        style={fieldStyle}
+                        placeholder="Your password"
+                        type="password"
+                        value={loginForm.password}
+                        onChange={(e) => {
+                          setLoginForm((prev) => ({
+                            ...prev,
+                            password: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") loginUser();
+                        }}
+                      />
+                    </FieldLabel>
+                  </div>
+                  <button
+                    style={{
+                      ...styles.primaryButton,
+                      opacity: authLoading ? 0.7 : 1,
+                    }}
+                    type="button"
+                    onClick={async () => {
+                      setAuthLoading(true);
+                      setAuthError("");
+                      try {
+                        await loginUser();
+                      } catch (e) {
+                        setAuthError(e.message);
+                      } finally {
+                        setAuthLoading(false);
+                      }
+                    }}
+                  >
+                    {authLoading ? "Signing in…" : "Sign In →"}
+                  </button>
+                  <div
+                    style={{
+                      textAlign: "center",
+                      fontSize: 12,
+                      color: palette.textDim,
+                    }}
+                  >
+                    No account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthTab("register");
+                        setAuthError("");
+                      }}
+                      style={{
+                        appearance: "none",
+                        border: "none",
+                        background: "none",
+                        color: palette.accent,
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}
+                    >
+                      Create one free
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <FieldLabel label="Email">
+                      <input
+                        style={fieldStyle}
+                        placeholder="you@example.com"
+                        type="email"
+                        value={registerForm.email}
+                        onChange={(e) => {
+                          setRegisterForm((prev) => ({
+                            ...prev,
+                            email: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                      />
+                    </FieldLabel>
+                    <FieldLabel label="Password">
+                      <input
+                        style={fieldStyle}
+                        placeholder="At least 8 characters"
+                        type="password"
+                        value={registerForm.password}
+                        onChange={(e) => {
+                          setRegisterForm((prev) => ({
+                            ...prev,
+                            password: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                      />
+                    </FieldLabel>
+                    <FieldLabel label="Confirm Password">
+                      <input
+                        style={fieldStyle}
+                        placeholder="Repeat password"
+                        type="password"
+                        value={registerForm.confirm}
+                        onChange={(e) => {
+                          setRegisterForm((prev) => ({
+                            ...prev,
+                            confirm: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") registerUser();
+                        }}
+                      />
+                    </FieldLabel>
+                  </div>
+                  <button
+                    style={{
+                      ...styles.primaryButton,
+                      background: "linear-gradient(135deg,#22c55e,#16a34a)",
+                      boxShadow: "0 10px 24px rgba(34,197,94,0.25)",
+                      opacity: authLoading ? 0.7 : 1,
+                    }}
+                    type="button"
+                    onClick={registerUser}
+                  >
+                    {authLoading
+                      ? "Creating account…"
+                      : "Create Free Account →"}
+                  </button>
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: 12,
+                      background: "rgba(74,222,128,0.06)",
+                      border: "1px solid rgba(74,222,128,0.15)",
+                      fontSize: 12,
+                      color: palette.textSoft,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    ✓ Free forever · No card required · Live radar + journal
+                    included
+                  </div>
+                  <div
+                    style={{
+                      textAlign: "center",
+                      fontSize: 12,
+                      color: palette.textDim,
+                    }}
+                  >
+                    Already have an account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthTab("login");
+                        setAuthError("");
+                      }}
+                      style={{
+                        appearance: "none",
+                        border: "none",
+                        background: "none",
+                        color: palette.accent,
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}
+                    >
+                      Sign in
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div
+            style={{
+              textAlign: "center",
+              marginTop: 20,
+              fontSize: 11,
+              color: palette.textDim,
+            }}
+          >
+            By creating an account you agree to our terms of service.{" "}
+            <a
+              href="https://www.redoctobersystems.com"
+              style={{ color: palette.textDim }}
+            >
+              ← Back to site
+            </a>
           </div>
         </div>
       </div>
@@ -2848,9 +3173,11 @@ export default function AppPreBeta() {
   if (activeTab === "billing") {
     return (
       <div style={styles.app}>
-        <div style={styles.shell} className="llab-shell">
-          <BillingPage token={getStoredToken()} compact={false} />
-        </div>
+        <BillingPage
+          token={getStoredToken()}
+          compact={false}
+          onBack={() => setActiveTab("dashboard")}
+        />
       </div>
     );
   }
@@ -3477,64 +3804,13 @@ export default function AppPreBeta() {
               </div>
             </div>
 
-            {/* Signal bar — shows placeholder when no event */}
-            {selectedEvent ? (
+            {/* Signal bar — only shows when event selected */}
+            {selectedEvent && (
               <SignalInsightBar
                 event={selectedEvent}
                 rr={selectedEventRR}
                 risk={decisionRiskAmount}
               />
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(7,minmax(0,1fr))",
-                  gap: 6,
-                }}
-              >
-                {[
-                  "ENTRY",
-                  "STOP",
-                  "TP1",
-                  "TP2",
-                  "STATE",
-                  "LIVE TTL",
-                  "SESSION",
-                ].map((label) => (
-                  <div
-                    key={label}
-                    style={{
-                      background: "rgba(255,255,255,0.02)",
-                      border: `1px solid ${palette.borderSoft}`,
-                      borderRadius: 12,
-                      padding: "8px 10px",
-                      display: "grid",
-                      gap: 3,
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 9,
-                        color: palette.textDim,
-                        textTransform: "uppercase",
-                        letterSpacing: 1,
-                        fontWeight: 800,
-                      }}
-                    >
-                      {label}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 700,
-                        color: "rgba(255,255,255,0.15)",
-                      }}
-                    >
-                      —
-                    </div>
-                  </div>
-                ))}
-              </div>
             )}
           </div>
 
@@ -3572,95 +3848,118 @@ export default function AppPreBeta() {
                 alignContent: "start",
               }}
             >
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                }}
-              >
-                <MiniBox label="Pair" value={selectedEvent?.pair || "—"} />
-                <MiniBox
-                  label="Confidence"
-                  value={
-                    selectedEvent
-                      ? `${Math.round((selectedEvent?.botConfidence || 0) * 100)}%`
-                      : "—"
-                  }
-                  subtext={selectedEvent?.sweepType || "—"}
-                />
-              </div>
-              <div
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 14,
-                  background: "rgba(255,255,255,0.025)",
-                  border: `1px solid ${palette.borderSoft}`,
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontSize: 10,
-                    color: palette.textDim,
-                    marginBottom: 7,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.8,
-                    fontWeight: 800,
-                  }}
-                >
-                  <span>Setup Strength</span>
-                  <span>
-                    {Math.round((selectedEvent?.botConfidence || 0) * 100)}%
-                  </span>
-                </div>
-                <div
-                  style={{
-                    height: 6,
-                    borderRadius: 999,
-                    background: "rgba(255,255,255,0.08)",
-                    overflow: "hidden",
-                  }}
-                >
+              {selectedEvent ? (
+                <>
                   <div
                     style={{
-                      width: `${Math.max(4, Math.round((selectedEvent?.botConfidence || 0) * 100))}%`,
-                      height: "100%",
-                      borderRadius: 999,
-                      background:
-                        (selectedEvent?.botConfidence || 0) >= 0.7
-                          ? "linear-gradient(90deg,#22c55e,#86efac)"
-                          : (selectedEvent?.botConfidence || 0) >= 0.45
-                            ? "linear-gradient(90deg,#f59e0b,#fde68a)"
-                            : "linear-gradient(90deg,#fb7185,#fecdd3)",
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
                     }}
-                  />
+                  >
+                    <MiniBox label="Pair" value={selectedEvent.pair || "—"} />
+                    <MiniBox
+                      label="Confidence"
+                      value={`${Math.round((selectedEvent.botConfidence || 0) * 100)}%`}
+                      subtext={selectedEvent.sweepType || "—"}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 14,
+                      background: "rgba(255,255,255,0.025)",
+                      border: `1px solid ${palette.borderSoft}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        fontSize: 10,
+                        color: palette.textDim,
+                        marginBottom: 7,
+                        textTransform: "uppercase",
+                        letterSpacing: 0.8,
+                        fontWeight: 800,
+                      }}
+                    >
+                      <span>Setup Strength</span>
+                      <span>
+                        {Math.round((selectedEvent.botConfidence || 0) * 100)}%
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: 6,
+                        borderRadius: 999,
+                        background: "rgba(255,255,255,0.08)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${Math.max(4, Math.round((selectedEvent.botConfidence || 0) * 100))}%`,
+                          height: "100%",
+                          borderRadius: 999,
+                          background:
+                            (selectedEvent.botConfidence || 0) >= 0.7
+                              ? "linear-gradient(90deg,#22c55e,#86efac)"
+                              : (selectedEvent.botConfidence || 0) >= 0.45
+                                ? "linear-gradient(90deg,#f59e0b,#fde68a)"
+                                : "linear-gradient(90deg,#fb7185,#fecdd3)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
+                    }}
+                  >
+                    <MiniBox
+                      label="Pattern"
+                      value={
+                        selectedEvent.pattern || selectedEvent.sweepType || "—"
+                      }
+                      subtext={selectedEvent.structure || ""}
+                    />
+                    <MiniBox
+                      label="State"
+                      value={
+                        selectedEvent.tradeState ||
+                        getSignalState(selectedEvent.timestampUtc) ||
+                        "—"
+                      }
+                    />
+                  </div>
+                </>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    placeItems: "center",
+                    height: 120,
+                    gap: 8,
+                    opacity: 0.4,
+                  }}
+                >
+                  <div style={{ fontSize: 28 }}>📡</div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: palette.textSoft,
+                      textAlign: "center",
+                    }}
+                  >
+                    Select a signal
+                    <br />
+                    from the radar
+                  </div>
                 </div>
-              </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                }}
-              >
-                <MiniBox
-                  label="Pattern"
-                  value={
-                    selectedEvent?.pattern || selectedEvent?.sweepType || "—"
-                  }
-                  subtext={selectedEvent?.structure || ""}
-                />
-                <MiniBox
-                  label="State"
-                  value={
-                    selectedEvent?.tradeState ||
-                    getSignalState(selectedEvent?.timestampUtc) ||
-                    "—"
-                  }
-                />
-              </div>
+              )}
               <Divider />
               <SectionLabel>Prop Challenge</SectionLabel>
               <div style={{ display: "grid", gap: 6 }}>
