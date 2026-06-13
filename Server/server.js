@@ -8,8 +8,6 @@ const app = express() // MUST come before app.use
 app.use(
   cors({
     origin: [
-      'http://localhost:5173',
-      'http://localhost:5174',
       'https://redoctobersystems.com',
       'https://www.redoctobersystems.com',
       'https://app.redoctobersystems.com',
