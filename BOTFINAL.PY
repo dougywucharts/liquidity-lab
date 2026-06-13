@@ -40,6 +40,10 @@ WEBHOOK_URL = ""  # Discord disabled; radar bridge only
 
 USE_PROD_RADAR = True
 
+# Secret key for authenticating with the radar endpoint
+# Must match SWEEP_SECRET_KEY in server .env
+SWEEP_SECRET_KEY = os.getenv("SWEEP_SECRET_KEY", "")
+
 BRIDGE_URLS = [
     "http://localhost:5000/sweep",
     "https://liquidity-lab-api.onrender.com/sweep",
@@ -1394,10 +1398,21 @@ def post_sweep_to_radar(
             "chartCandles": _build_chart_candles(df),
         }
 
+        sweep_headers = {
+            "Content-Type": "application/json",
+            "X-Sweep-Key": SWEEP_SECRET_KEY,
+        }
+
         for url in BRIDGE_URLS:
             try:
-                resp = requests.post(url, json=payload, timeout=BRIDGE_TIMEOUT)
-                if resp.status_code >= 300:
+                resp = requests.post(
+                    url, json=payload, headers=sweep_headers, timeout=BRIDGE_TIMEOUT
+                )
+                if resp.status_code == 401:
+                    print(
+                        f"[RADAR AUTH ERROR] {url} -> Invalid X-Sweep-Key. Check SWEEP_SECRET_KEY env var."
+                    )
+                elif resp.status_code >= 300:
                     print(f"[RADAR WARN] {url} -> {resp.status_code} {resp.text}")
                 else:
                     print(f"[RADAR OK] {url} -> {payload['pair']} {event_type}")

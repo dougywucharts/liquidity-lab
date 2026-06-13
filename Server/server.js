@@ -12,11 +12,15 @@ app.use(
       'http://localhost:5174',
       'https://redoctobersystems.com',
       'https://www.redoctobersystems.com',
+      'https://app.redoctobersystems.com',
       'https://liquidity-lab-git-main-dougywucharts-7220s-projects.vercel.app'
     ],
     credentials: true
   })
 )
+
+// Stripe webhook needs raw body — must be before express.json()
+app.use('/stripe/webhook', express.raw({ type: 'application/json' }))
 
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
@@ -678,6 +682,145 @@ async function getLatestActiveSubscriptionForCustomer (customerId) {
 const events = []
 const MAX_EVENTS = 200
 
+// Simple in-memory rate limiter for /sweep — no extra packages needed
+// Allows 60 requests per minute per IP, then blocks for 60 seconds
+const sweepRateLimiter = new Map()
+const SWEEP_RATE_LIMIT = 60 // max requests per window
+const SWEEP_RATE_WINDOW = 60000 // 1 minute window in ms
+const SWEEP_BLOCK_DURATION = 60000 // block for 1 minute after limit hit
+
+function checkSweepRateLimit (ip) {
+  const now = Date.now()
+  const record = sweepRateLimiter.get(ip)
+
+  if (!record) {
+    sweepRateLimiter.set(ip, { count: 1, windowStart: now, blocked: false })
+    return { allowed: true }
+  }
+
+  // Still blocked
+  if (record.blocked) {
+    if (now - record.blockedAt < SWEEP_BLOCK_DURATION) {
+      return {
+        allowed: false,
+        retryAfter: Math.ceil(
+          (SWEEP_BLOCK_DURATION - (now - record.blockedAt)) / 1000
+        )
+      }
+    }
+    // Block expired — reset
+    sweepRateLimiter.set(ip, { count: 1, windowStart: now, blocked: false })
+    return { allowed: true }
+  }
+
+  // New window
+  if (now - record.windowStart > SWEEP_RATE_WINDOW) {
+    sweepRateLimiter.set(ip, { count: 1, windowStart: now, blocked: false })
+    return { allowed: true }
+  }
+
+  // Within window
+  record.count++
+  if (record.count > SWEEP_RATE_LIMIT) {
+    record.blocked = true
+    record.blockedAt = now
+    console.warn(
+      `[RATE LIMIT] /sweep blocked IP: ${ip} after ${record.count} requests`
+    )
+    return { allowed: false, retryAfter: 60 }
+  }
+
+  return { allowed: true, remaining: SWEEP_RATE_LIMIT - record.count }
+}
+
+// Clean up old rate limit records every 5 minutes to prevent memory leak
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, record] of sweepRateLimiter.entries()) {
+    if (now - record.windowStart > SWEEP_RATE_WINDOW * 2) {
+      sweepRateLimiter.delete(ip)
+    }
+  }
+}, 5 * 60 * 1000)
+
+// Global AI rate limiter — IP based, prevents account farming abuse
+// Max 20 AI calls per IP per hour regardless of how many accounts they make
+const aiRateLimiter = new Map()
+const AI_GLOBAL_LIMIT = 20 // max AI calls per IP per hour
+const AI_GLOBAL_WINDOW = 3600000 // 1 hour in ms
+
+function checkAiRateLimit (ip) {
+  const now = Date.now()
+  const record = aiRateLimiter.get(ip)
+
+  if (!record) {
+    aiRateLimiter.set(ip, { count: 1, windowStart: now })
+    return { allowed: true, remaining: AI_GLOBAL_LIMIT - 1 }
+  }
+
+  // New window — reset
+  if (now - record.windowStart > AI_GLOBAL_WINDOW) {
+    aiRateLimiter.set(ip, { count: 1, windowStart: now })
+    return { allowed: true, remaining: AI_GLOBAL_LIMIT - 1 }
+  }
+
+  record.count++
+  if (record.count > AI_GLOBAL_LIMIT) {
+    const retryAfter = Math.ceil(
+      (AI_GLOBAL_WINDOW - (now - record.windowStart)) / 60000
+    )
+    console.warn(
+      `[AI RATE LIMIT] IP ${ip} hit global AI limit (${record.count} calls this hour)`
+    )
+    return {
+      allowed: false,
+      retryAfter,
+      message: `AI review limit reached. Try again in ${retryAfter} minutes.`
+    }
+  }
+
+  return { allowed: true, remaining: AI_GLOBAL_LIMIT - record.count }
+}
+
+// Also limit Trader DNA — max 3 per IP per hour (expensive call)
+const dnaRateLimiter = new Map()
+const DNA_GLOBAL_LIMIT = 3
+const DNA_GLOBAL_WINDOW = 3600000
+
+function checkDnaRateLimit (ip) {
+  const now = Date.now()
+  const record = dnaRateLimiter.get(ip)
+  if (!record) {
+    dnaRateLimiter.set(ip, { count: 1, windowStart: now })
+    return { allowed: true }
+  }
+  if (now - record.windowStart > DNA_GLOBAL_WINDOW) {
+    dnaRateLimiter.set(ip, { count: 1, windowStart: now })
+    return { allowed: true }
+  }
+  record.count++
+  if (record.count > DNA_GLOBAL_LIMIT) {
+    return {
+      allowed: false,
+      message: 'Trader DNA limit reached. Max 3 generations per hour.'
+    }
+  }
+  return { allowed: true }
+}
+
+// Clean up old AI rate limit records every 10 minutes
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, record] of aiRateLimiter.entries()) {
+    if (now - record.windowStart > AI_GLOBAL_WINDOW * 2)
+      aiRateLimiter.delete(ip)
+  }
+  for (const [ip, record] of dnaRateLimiter.entries()) {
+    if (now - record.windowStart > DNA_GLOBAL_WINDOW * 2)
+      dnaRateLimiter.delete(ip)
+  }
+}, 10 * 60 * 1000)
+
 // Load recent radar events from DB on startup so feed survives server restarts
 async function loadRadarEventsFromDb () {
   try {
@@ -698,6 +841,37 @@ async function loadRadarEventsFromDb () {
 loadRadarEventsFromDb()
 
 app.post('/sweep', async (req, res) => {
+  // SWEEP_SECRET_KEY is REQUIRED on all /sweep posts — no unauthenticated access
+  // Any POST without the correct key is rejected immediately
+  const sweepKey = req.headers['x-sweep-key'] || ''
+  const validSweepKey = process.env.SWEEP_SECRET_KEY || ''
+
+  if (!validSweepKey) {
+    // SWEEP_SECRET_KEY not configured — log warning but allow through in dev
+    console.warn(
+      '[SWEEP] WARNING: SWEEP_SECRET_KEY not set in environment — endpoint is unprotected!'
+    )
+  } else if (sweepKey !== validSweepKey) {
+    console.warn(
+      `[SWEEP] Rejected unauthorized POST — invalid or missing X-Sweep-Key`
+    )
+    return res.status(401).json({ error: 'Unauthorized — invalid sweep key' })
+  }
+
+  // Rate limit as secondary check (valid key still rate limited to catch misconfigured bots)
+  const ip =
+    req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+    req.socket.remoteAddress ||
+    'unknown'
+  const rateCheck = checkSweepRateLimit(ip)
+  if (!rateCheck.allowed) {
+    return res.status(429).json({
+      error: 'Rate limit exceeded',
+      retryAfter: rateCheck.retryAfter,
+      message: `Too many requests. Try again in ${rateCheck.retryAfter} seconds.`
+    })
+  }
+
   const event = req.body || {}
   const pair =
     event.pair ||
@@ -943,6 +1117,18 @@ app.post('/ai-review', requireAuth, async (req, res) => {
     if (!ENABLE_AI || !anthropic) {
       return res.status(503).json({ error: 'AI review is not enabled' })
     }
+
+    // Global IP rate limit — stops account farming abuse
+    const ip =
+      req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      'unknown'
+    const globalCheck = checkAiRateLimit(ip)
+    if (!globalCheck.allowed) {
+      return res.status(429).json({ error: globalCheck.message })
+    }
+
+    // Per-user daily limit
     const usage = canUseAiReview(req.user, AI_REVIEW_DAILY_LIMIT)
     if (!usage.allowed) {
       return res.status(403).json({ error: 'Daily AI review limit reached' })
@@ -984,6 +1170,16 @@ app.post('/trader-dna', requireAuth, async (req, res) => {
   try {
     if (!ENABLE_AI || !anthropic) {
       return res.status(503).json({ error: 'AI not enabled' })
+    }
+
+    // Global IP rate limit for DNA — expensive call, max 3/hour per IP
+    const ip =
+      req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      req.socket.remoteAddress ||
+      'unknown'
+    const dnaCheck = checkDnaRateLimit(ip)
+    if (!dnaCheck.allowed) {
+      return res.status(429).json({ error: dnaCheck.message })
     }
     // Require at least 10 trades for meaningful DNA
     const logs = await prisma.tradeLog.findMany({
@@ -1309,6 +1505,159 @@ app.post('/stripe/sync', requireAuth, async (req, res) => {
     console.error('Stripe sync error:', err)
     return res.status(500).json({ error: 'Stripe sync failed' })
   }
+})
+
+// ---------------- STRIPE WEBHOOK ----------------
+// This is the critical endpoint that auto-updates user plans after payment
+// Must be registered in Stripe Dashboard → Webhooks → Add endpoint
+// URL: https://your-render-url.onrender.com/stripe/webhook
+// Events to listen for: customer.subscription.created, updated, deleted
+//                        checkout.session.completed, invoice.payment_failed
+
+app.post('/stripe/webhook', async (req, res) => {
+  if (!stripe) return res.status(500).json({ error: 'Stripe not configured' })
+
+  const sig = req.headers['stripe-signature']
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET
+
+  if (!webhookSecret) {
+    console.error('[WEBHOOK] STRIPE_WEBHOOK_SECRET not set')
+    return res.status(500).json({ error: 'Webhook secret not configured' })
+  }
+
+  let event
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret)
+  } catch (err) {
+    console.error('[WEBHOOK] Signature verification failed:', err.message)
+    return res
+      .status(400)
+      .json({ error: `Webhook signature failed: ${err.message}` })
+  }
+
+  console.log('[WEBHOOK]', event.type, event.id)
+
+  try {
+    switch (event.type) {
+      // Payment succeeded — checkout completed
+      case 'checkout.session.completed': {
+        const session = event.data.object
+        const customerId = session.customer
+        const userId = session.client_reference_id || session.metadata?.userId
+
+        if (!customerId) break
+
+        // Get the subscription from the session
+        const subId = session.subscription
+        if (!subId) break
+
+        const sub = await stripe.subscriptions.retrieve(subId)
+        const priceId = sub.items?.data?.[0]?.price?.id || null
+        const billingPlan = resolveBillingPlanFromPriceId(priceId)
+
+        // Find user by customerId or userId
+        const whereClause = userId
+          ? { id: userId }
+          : { stripeCustomerId: customerId }
+
+        await prisma.user.updateMany({
+          where: whereClause,
+          data: {
+            stripeCustomerId: customerId,
+            stripeSubId: sub.id,
+            stripePriceId: priceId,
+            stripeStatus: sub.status,
+            billingPlan,
+            isActive: ['active', 'trialing'].includes(sub.status),
+            billingPeriodEnd: sub.current_period_end
+              ? new Date(sub.current_period_end * 1000)
+              : null
+          }
+        })
+
+        console.log(
+          '[WEBHOOK] Checkout complete — plan updated to:',
+          billingPlan,
+          'for customer:',
+          customerId
+        )
+        break
+      }
+
+      // Subscription created or updated
+      case 'customer.subscription.created':
+      case 'customer.subscription.updated': {
+        const sub = event.data.object
+        const customerId = sub.customer
+        const priceId = sub.items?.data?.[0]?.price?.id || null
+        const billingPlan = resolveBillingPlanFromPriceId(priceId)
+
+        await prisma.user.updateMany({
+          where: { stripeCustomerId: String(customerId) },
+          data: {
+            stripeSubId: sub.id,
+            stripePriceId: priceId,
+            stripeStatus: sub.status,
+            billingPlan,
+            isActive: ['active', 'trialing'].includes(sub.status),
+            billingPeriodEnd: sub.current_period_end
+              ? new Date(sub.current_period_end * 1000)
+              : null
+          }
+        })
+
+        console.log(
+          '[WEBHOOK] Subscription',
+          event.type,
+          '— plan:',
+          billingPlan,
+          'status:',
+          sub.status
+        )
+        break
+      }
+
+      // Subscription cancelled or expired
+      case 'customer.subscription.deleted': {
+        const sub = event.data.object
+        const customerId = sub.customer
+
+        await prisma.user.updateMany({
+          where: { stripeCustomerId: String(customerId) },
+          data: {
+            stripeStatus: 'canceled',
+            billingPlan: 'starter',
+            isActive: false
+          }
+        })
+
+        console.log('[WEBHOOK] Subscription canceled for customer:', customerId)
+        break
+      }
+
+      // Payment failed — notify but don't downgrade immediately
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object
+        const customerId = invoice.customer
+
+        await prisma.user.updateMany({
+          where: { stripeCustomerId: String(customerId) },
+          data: { stripeStatus: 'past_due' }
+        })
+
+        console.log('[WEBHOOK] Payment failed for customer:', customerId)
+        break
+      }
+
+      default:
+        console.log('[WEBHOOK] Unhandled event type:', event.type)
+    }
+  } catch (err) {
+    console.error('[WEBHOOK] Handler error:', err)
+    return res.status(500).json({ error: 'Webhook handler failed' })
+  }
+
+  res.json({ received: true })
 })
 
 // ---------------- START ----------------
