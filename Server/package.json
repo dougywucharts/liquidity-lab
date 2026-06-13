@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "postinstall": "prisma generate --generator client"
+    "build": "prisma generate",
+    "start": "node server.js",
+    "postinstall": "echo 'skipping'"
   },
   "keywords": [],
   "author": "",
