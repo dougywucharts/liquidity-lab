@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate --no-engine"
   },
   "keywords": [],
   "author": "",
