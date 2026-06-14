@@ -30,6 +30,9 @@ import mplfinance as mpf
 import pandas as pd
 import requests
 
+from dotenv import load_dotenv
+load_dotenv()
+
 pd.set_option("mode.chained_assignment", None)
 
 # =========================================================
