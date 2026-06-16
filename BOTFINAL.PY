@@ -31,6 +31,7 @@ import pandas as pd
 import requests
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 pd.set_option("mode.chained_assignment", None)
@@ -359,6 +360,7 @@ def init_exchange():
     exchange = ccxt.blofin(
         {"enableRateLimit": True, "options": {"defaultType": "swap"}}
     )
+    time.sleep(5)
     exchange.load_markets()
     print("[INIT] Connected to Blofin.")
     print(f"[LOG FILE] {LOG_FILE}")
@@ -1336,10 +1338,8 @@ def post_sweep_to_radar(
 
         pattern = detect_pattern(direction, df, setup_level)
 
-        # Block alerts where the detected pattern contradicts the sweep direction
-        # e.g. a Failed Reclaim on a bullish sweep = price didn't actually reclaim
         if pattern_contradicts_direction(pattern, direction):
-            logger.info(
+            print(
                 f"[CONTRADICTION BLOCK] {symbol} {direction} blocked — "
                 f"pattern '{pattern}' contradicts direction"
             )
