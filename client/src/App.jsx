@@ -3755,52 +3755,51 @@ export default function AppPreBeta() {
                   </div>
                 </div>
               )}
+              {/* ── Exchange + Prop Firm Quick Links ── */}
               <div
                 style={{
                   position: "absolute",
                   bottom: 0,
                   left: 0,
                   right: 0,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  flexWrap: "wrap",
-                  padding: "6px 10px",
-                  background:
-                    "linear-gradient(0deg,rgba(3,6,11,0.88) 0%,transparent 100%)",
+                  padding: "8px 10px",
+                  background: "linear-gradient(0deg,rgba(3,6,11,0.92) 0%,transparent 100%)",
                   zIndex: 5,
+                  display: "grid",
+                  gap: 5,
                 }}
               >
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: "rgba(255,255,255,0.38)",
-                    fontWeight: 800,
-                    letterSpacing: 0.5,
-                  }}
-                >
-                  Open on
-                </span>
-                {[
-                  ["BLOFIN", exchangeLinks.blofin],
-                  ["BINANCE", exchangeLinks.binance],
-                  ["BYBIT", exchangeLinks.bybit],
-                  ["OKX", exchangeLinks.okx],
-                  ["TV", exchangeLinks.tradingView],
-                ].map(([label, href]) => (
-                  <a
-                    key={label}
-                    href={href}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{
-                      ...styles.smallButton,
-                      background: "rgba(0,0,0,0.55)",
-                    }}
-                  >
-                    {label}
-                  </a>
-                ))}
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", marginRight: 2 }}>Trade on</span>
+                  {[
+                    { label: "Blofin", href: `https://blofin.com/futures/${dashPair}?ref=redoctober`, color: "#3b82f6", bg: "rgba(59,130,246,0.12)" },
+                    { label: "Bybit", href: `https://www.bybit.com/trade/usdt/${basePair}?affiliate_id=redoctober`, color: "#f59e0b", bg: "rgba(245,158,11,0.12)" },
+                    { label: "Binance", href: `https://www.binance.com/en/futures/${basePair}?ref=redoctober`, color: "#f0b90b", bg: "rgba(240,185,11,0.12)" },
+                    { label: "OKX", href: `https://www.okx.com/trade-swap/${dashPair.toLowerCase()}-swap?channelid=redoctober`, color: "#60a5fa", bg: "rgba(96,165,250,0.1)" },
+                    { label: "Kraken", href: "https://www.kraken.com/sign-up?referral=redoctober", color: "#7c3aed", bg: "rgba(124,58,237,0.12)" },
+                    { label: "TradingView", href: `https://www.tradingview.com/chart/?symbol=BINANCE:${basePair}&offer_id=10&aff_id=redoctober`, color: "#2962ff", bg: "rgba(41,98,255,0.1)" },
+                  ].map(({ label, href, color, bg }) => (
+                    <a key={label} href={href} target="_blank" rel="noreferrer"
+                      style={{ display: "inline-flex", alignItems: "center", padding: "4px 10px", borderRadius: 8, background: bg, border: `1px solid ${color}33`, color, fontSize: 11, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" }}>
+                      {label}
+                    </a>
+                  ))}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)", fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", marginRight: 2 }}>Prop firms</span>
+                  {[
+                    { label: "FTMO", href: "https://ftmo.com/?affiliates=redoctober", color: "#ef4444", bg: "rgba(239,68,68,0.1)" },
+                    { label: "MyFundedFX", href: "https://myfundedfx.tech/registration/?ref=redoctober", color: "#10b981", bg: "rgba(16,185,129,0.1)" },
+                    { label: "The5ers", href: "https://the5ers.com/?utm_source=redoctober", color: "#8b5cf6", bg: "rgba(139,92,246,0.1)" },
+                    { label: "Topstep", href: "https://www.topstep.com/?ref=redoctober", color: "#f97316", bg: "rgba(249,115,22,0.1)" },
+                    { label: "Apex", href: "https://apextraderfunding.com/?ref=redoctober", color: "#06b6d4", bg: "rgba(6,182,212,0.1)" },
+                  ].map(({ label, href, color, bg }) => (
+                    <a key={label} href={href} target="_blank" rel="noreferrer"
+                      style={{ display: "inline-flex", alignItems: "center", padding: "4px 10px", borderRadius: 8, background: bg, border: `1px solid ${color}33`, color, fontSize: 11, fontWeight: 800, textDecoration: "none", whiteSpace: "nowrap" }}>
+                      {label}
+                    </a>
+                  ))}
+                </div>
               </div>
             </div>
 
