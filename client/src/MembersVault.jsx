@@ -410,7 +410,7 @@ const VIDEO_LIBRARY = [
         title: "Trading in the Zone — Full Seminar",
         description:
           "The complete Mark Douglas seminar on probabilistic thinking, removing fear from trading, and building consistency. Required watching.",
-        youtubeId: "laHlPCgFHTo",
+        youtubeId: "fbJUN8rJTw4",
         duration: "2h 18m",
       },
       {
