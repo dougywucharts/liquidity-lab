@@ -418,7 +418,7 @@ const VIDEO_LIBRARY = [
         title: "How to Think Like a Professional Trader",
         description:
           "Mark Douglas breaks down the five fundamental truths every trader must internalize to stop fighting the market.",
-        youtubeId: "T3DFPfmGGnw",
+        youtubeId: "7ocTVm-M7q8",
         duration: "58m",
       },
       {
@@ -426,7 +426,7 @@ const VIDEO_LIBRARY = [
         title: "The Mental Game of Trading",
         description:
           "Deep dive into why traders self-sabotage and how to rewire your relationship with uncertainty and risk.",
-        youtubeId: "94pFsLGJy-s",
+        youtubeId: "sg4YzRhILFE",
         duration: "1h 12m",
       },
     ],
@@ -443,7 +443,7 @@ const VIDEO_LIBRARY = [
         title: "Institutional Price Action Masterclass",
         description:
           "David Paul walks through how institutions move markets, where they accumulate and distribute, and how retail traders can align with them.",
-        youtubeId: "GqZ9qRlw5HY",
+        youtubeId: "gAYLXYmUUCg",
         duration: "1h 45m",
       },
       {
@@ -451,7 +451,7 @@ const VIDEO_LIBRARY = [
         title: "Reading Market Structure Like a Pro",
         description:
           "How to identify genuine market structure shifts vs. noise, and why most traders misread swing highs and lows.",
-        youtubeId: "yDXB8vIgFNQ",
+        youtubeId: "GKckbawOVeU",
         duration: "52m",
       },
       {
@@ -459,7 +459,7 @@ const VIDEO_LIBRARY = [
         title: "Liquidity, Stop Hunts & Smart Money",
         description:
           "The mechanics behind stop hunts, liquidity grabs, and how to use them as entry signals instead of getting caught on the wrong side.",
-        youtubeId: "4XJ3BFfmKGY",
+        youtubeId: "MGglyvc8d58",
         duration: "1h 3m",
       },
     ],
