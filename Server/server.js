@@ -234,10 +234,53 @@ Return ONLY a valid JSON object with this exact shape:
 }
 
 // ---------------- TRADER DNA ----------------
+function computeTraderStats (logs) {
+  // Only count trades with a real, decided outcome — exclude Open/Pending/empty
+  const closed = logs.filter(log => {
+    const o = String(log.outcome || '')
+      .toLowerCase()
+      .trim()
+    return o && o !== 'open' && o !== 'pending'
+  })
+
+  const wins = closed.filter(log => {
+    const o = String(log.outcome || '').toLowerCase()
+    return o.includes('win') || o.includes('tp')
+  })
+
+  const losses = closed.filter(log => {
+    const o = String(log.outcome || '').toLowerCase()
+    return o.includes('loss')
+  })
+
+  const decidedCount = wins.length + losses.length
+  const winRate = decidedCount > 0 ? wins.length / decidedCount : null
+
+  const rrValues = closed
+    .map(log => Number(log.realizedRR))
+    .filter(n => Number.isFinite(n))
+  const avgRR =
+    rrValues.length > 0
+      ? rrValues.reduce((a, b) => a + b, 0) / rrValues.length
+      : null
+
+  return {
+    winRate,
+    avgRR,
+    closedCount: closed.length,
+    openCount: logs.length - closed.length,
+    winsCount: wins.length,
+    lossesCount: losses.length
+  }
+}
+
 async function runTraderDna (logs) {
   if (!anthropic || !ENABLE_AI) {
     return { error: 'AI disabled' }
   }
+
+  // Compute real stats in code — never let the model invent these
+  const stats = computeTraderStats(logs)
 
   // Summarize logs for the prompt — send condensed version to save tokens
   const logSummaries = logs.slice(0, 50).map((log, i) => ({
@@ -265,6 +308,21 @@ async function runTraderDna (logs) {
 You are analyzing a trader's complete trade history to generate their "Trader DNA" profile.
 This is a personalized psychological and performance analysis based on their actual logged trades.
 
+PRE-CALCULATED STATS (these are ground truth — use them exactly, do not recalculate or estimate your own win rate or RR):
+- Total trades logged: ${logs.length}
+- Closed/decided trades: ${stats.closedCount} (wins: ${
+    stats.winsCount
+  }, losses: ${stats.lossesCount})
+- Still open/undecided: ${stats.openCount}
+- Win rate (closed trades only): ${
+    stats.winRate != null
+      ? (stats.winRate * 100).toFixed(1) + '%'
+      : 'N/A — not enough closed trades'
+  }
+- Average realized RR (closed trades only): ${
+    stats.avgRR != null ? stats.avgRR.toFixed(2) : 'N/A'
+  }
+
 TRADE HISTORY (${logs.length} trades):
 ${JSON.stringify(logSummaries, null, 2)}
 
@@ -283,8 +341,6 @@ Return ONLY a valid JSON object:
   "coachingFocus": "<the single most impactful thing to improve right now>",
   "overallAssessment": "<2-3 sentence honest summary of this trader>",
   "traderType": "<a short label like 'Disciplined Momentum Trader' or 'Impatient Scalper'>",
-  "winRate": <number>,
-  "avgRR": <number or null>,
   "totalTrades": <number>,
   "bestStreakType": "<Win or Loss>",
   "riskDisciplineScore": <number 0-100>
@@ -305,7 +361,17 @@ Return ONLY a valid JSON object:
   const jsonMatch = rawText.match(/\{[\s\S]*\}/)
   if (!jsonMatch) throw new Error('Claude returned no JSON for Trader DNA')
 
-  return JSON.parse(jsonMatch[0])
+  const parsed = JSON.parse(jsonMatch[0])
+
+  // Override with code-computed stats — never trust the model's math
+  return {
+    ...parsed,
+    winRate: stats.winRate,
+    avgRR: stats.avgRR,
+    totalTrades: logs.length,
+    closedTrades: stats.closedCount,
+    openTrades: stats.openCount
+  }
 }
 
 function getBearerToken (req) {
@@ -1311,7 +1377,9 @@ app.post('/logs', requireAuth, async (req, res) => {
         durationMinutes: parseNum(payload.durationMinutes, 0),
         entry: entryNum,
         stop: stopNum,
+        exit: exitNum,
         pnl: pnlNum,
+        realizedRR: realizedRR != null ? Number(realizedRR.toFixed(2)) : null,
         notes: payload.notes || '',
         screenshotUrl: payload.screenshotUrl || '',
         linkedEventId: payload.linkedEventId || null,

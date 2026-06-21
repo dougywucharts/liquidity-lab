@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")
 }
 
 model User {
@@ -44,6 +43,7 @@ model TradeLog {
 
   entry               Float?
   stop                Float?
+  exit                Float?
   tp1                 Float?
   tp2                 Float?
   rr1                 Float?
@@ -64,6 +64,7 @@ model TradeLog {
   outcome             String?
   confidenceSelf      Float?
   durationMinutes     Float?
+  realizedRR          Float?
 
   emotionalPressure   Float?
   setupQuality        Float?
