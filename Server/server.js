@@ -1229,14 +1229,32 @@ app.post('/ai-review', requireAuth, async (req, res) => {
   }
 })
 
-// ---------------- TRADER DNA ----------------
+// GET /trader-dna — return stored DNA without regenerating
+app.get('/trader-dna', requireAuth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } })
+    if (!user) return res.status(404).json({ error: 'User not found' })
+    if (!user.traderDna)
+      return res.json({ ok: true, dna: null, tradesAnalyzed: 0 })
+    return res.json({
+      ok: true,
+      dna: user.traderDna,
+      tradesAnalyzed: user.traderDna?.totalTrades || 0,
+      generatedAt: user.traderDnaGeneratedAt
+    })
+  } catch (err) {
+    console.error('Get Trader DNA error:', err)
+    return res.status(500).json({ error: 'Failed to load Trader DNA' })
+  }
+})
+
+// POST /trader-dna — generate fresh DNA and store it
 app.post('/trader-dna', requireAuth, async (req, res) => {
   try {
     if (!ENABLE_AI || !anthropic) {
       return res.status(503).json({ error: 'AI not enabled' })
     }
 
-    // Global IP rate limit for DNA — expensive call, max 3/hour per IP
     const ip =
       req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
       req.socket.remoteAddress ||
@@ -1245,12 +1263,13 @@ app.post('/trader-dna', requireAuth, async (req, res) => {
     if (!dnaCheck.allowed) {
       return res.status(429).json({ error: dnaCheck.message })
     }
-    // Require at least 10 trades for meaningful DNA
+
     const logs = await prisma.tradeLog.findMany({
       where: { userId: req.user.id },
       orderBy: { createdAt: 'desc' },
       take: 50
     })
+
     if (logs.length < 10) {
       return res.status(400).json({
         error: 'Not enough trades',
@@ -1258,7 +1277,18 @@ app.post('/trader-dna', requireAuth, async (req, res) => {
         tradesNeeded: 10 - logs.length
       })
     }
+
     const dna = await runTraderDna(logs)
+
+    // Store result on the user record
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        traderDna: dna,
+        traderDnaGeneratedAt: new Date()
+      }
+    })
+
     return res.json({ ok: true, dna, tradesAnalyzed: logs.length })
   } catch (err) {
     console.error('Trader DNA error:', err)

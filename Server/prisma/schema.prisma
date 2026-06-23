@@ -28,6 +28,8 @@ model User {
   screenshotReset    DateTime?
   aiReviewCount      Int          @default(0)
   aiReviewReset      DateTime?
+  traderDna           Json?
+  traderDnaGeneratedAt DateTime?
 }
 
 model TradeLog {

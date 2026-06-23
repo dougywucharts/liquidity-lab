@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import html2canvas from "html2canvas";
 
 const palette = {
@@ -1320,6 +1320,7 @@ function TraderDnaPage({
   currentUser,
 }) {
   const captureRef = useRef(null);
+  const [generatedAt, setGeneratedAt] = useState(null);
 
   async function exportProfile() {
     if (!captureRef.current) return;
@@ -1333,6 +1334,27 @@ function TraderDnaPage({
     link.href = canvas.toDataURL("image/png");
     link.click();
   }
+
+  // Load stored DNA on mount
+  useEffect(() => {
+    async function loadStored() {
+      try {
+        const token = localStorage.getItem("token") || "";
+        const res = await fetch(`${API_BASE}/trader-dna`, {
+          method: "GET",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        if (res.ok && data.dna) {
+          setDna(data.dna);
+          setGeneratedAt(data.generatedAt || null);
+        }
+      } catch (err) {
+        // Silently fail — user can still generate fresh
+      }
+    }
+    loadStored();
+  }, []);
 
   async function generate() {
     setLoading(true);
@@ -1349,6 +1371,7 @@ function TraderDnaPage({
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "Failed");
       setDna(data.dna);
+      setGeneratedAt(new Date().toISOString());
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1677,7 +1700,9 @@ function TraderDnaPage({
                     marginTop: 4,
                   }}
                 >
-                  {dna.avgRR != null && Number(dna.avgRR) !== 0 ? `${Number(dna.avgRR).toFixed(2)}R` : "—"}
+                  {dna.avgRR != null && Number(dna.avgRR) !== 0
+                    ? `${Number(dna.avgRR).toFixed(2)}R`
+                    : "—"}
                 </div>
               </div>
             </div>
@@ -1887,7 +1912,24 @@ function TraderDnaPage({
               </div>
             </div>
           </div>
-
+          {generatedAt && (
+            <div
+              style={{
+                textAlign: "center",
+                fontSize: 11,
+                color: palette.textDim,
+                marginTop: 4,
+              }}
+            >
+              Generated{" "}
+              {new Date(generatedAt).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </div>
+          )}
           {/* Regenerate + Export */}
           <div
             style={{
