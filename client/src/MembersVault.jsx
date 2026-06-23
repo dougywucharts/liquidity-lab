@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
+import html2canvas from "html2canvas";
 
 const palette = {
   bg: "#03060b",
@@ -1318,6 +1319,21 @@ function TraderDnaPage({
   setError,
   currentUser,
 }) {
+  const captureRef = useRef(null);
+
+  async function exportProfile() {
+    if (!captureRef.current) return;
+    const canvas = await html2canvas(captureRef.current, {
+      backgroundColor: "#03060b",
+      scale: 2,
+    });
+    const link = document.createElement("a");
+    const dateStr = new Date().toISOString().slice(0, 10);
+    link.download = `trader-dna-${dateStr}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
+  }
+
   async function generate() {
     setLoading(true);
     setError(null);
@@ -1495,7 +1511,7 @@ function TraderDnaPage({
       )}
 
       {dna && !loading && (
-        <div style={{ display: "grid", gap: 16 }}>
+        <div ref={captureRef} style={{ display: "grid", gap: 16 }}>
           {/* Trader type badge + overall */}
           <div
             style={{
@@ -1661,7 +1677,7 @@ function TraderDnaPage({
                     marginTop: 4,
                   }}
                 >
-                  {dna.avgRR != null ? `${Number(dna.avgRR).toFixed(2)}R` : "—"}
+                  {dna.avgRR != null && Number(dna.avgRR) !== 0 ? `${Number(dna.avgRR).toFixed(2)}R` : "—"}
                 </div>
               </div>
             </div>
@@ -1872,7 +1888,7 @@ function TraderDnaPage({
             </div>
           </div>
 
-          {/* Regenerate */}
+          {/* Regenerate + Export */}
           <div
             style={{
               display: "flex",
@@ -1881,6 +1897,22 @@ function TraderDnaPage({
               paddingTop: 8,
             }}
           >
+            <button
+              onClick={exportProfile}
+              style={{
+                appearance: "none",
+                border: `1px solid rgba(96,165,250,0.3)`,
+                borderRadius: 12,
+                padding: "10px 24px",
+                background: "rgba(96,165,250,0.08)",
+                color: palette.blue,
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              ⬇️ Export Profile
+            </button>
             <button
               onClick={generate}
               style={{
