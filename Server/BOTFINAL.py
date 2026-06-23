@@ -117,8 +117,9 @@ DOUBLE_SWEEP_MAX_BARS = 12
 DOUBLE_SWEEP_LEVEL_TOL = 0.0015
 DOUBLE_SWEEP_DIR_REQUIRED = True
 
-CHART_WINDOW = 120  # 2 hours on 1m — enough to see sweep origin and equal highs/lows
-
+CHART_WINDOW = (
+    300  # 5 hours on 1m — matches trigger lookback so sweep origin is always visible
+)
 # =========================================================
 # DEBUG / MONITORING
 # =========================================================
