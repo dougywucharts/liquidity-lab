@@ -1107,6 +1107,16 @@ app.get('/me', requireAuth, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({ where: { id: req.user.id } })
     if (!user) return res.status(404).json({ error: 'User not found.' })
+    const now = new Date()
+    if (user.aiReviewReset && now > new Date(user.aiReviewReset)) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { aiReviewCount: 0, aiReviewReset: null }
+      })
+      user.aiReviewCount = 0
+      user.aiReviewReset = null
+    }
+
     const hasProAccess =
       user.billingPlan === 'pro' ||
       user.billingPlan === 'pro_beta' ||
@@ -1241,7 +1251,7 @@ app.get('/trader-dna', requireAuth, async (req, res) => {
       dna: user.traderDna,
       tradesAnalyzed: user.traderDna?.totalTrades || 0,
       generatedAt: user.traderDnaGeneratedAt
-    })
+    }
   } catch (err) {
     console.error('Get Trader DNA error:', err)
     return res.status(500).json({ error: 'Failed to load Trader DNA' })
