@@ -1251,7 +1251,7 @@ app.get('/trader-dna', requireAuth, async (req, res) => {
       dna: user.traderDna,
       tradesAnalyzed: user.traderDna?.totalTrades || 0,
       generatedAt: user.traderDnaGeneratedAt
-    }
+    })
   } catch (err) {
     console.error('Get Trader DNA error:', err)
     return res.status(500).json({ error: 'Failed to load Trader DNA' })
