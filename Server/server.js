@@ -1258,6 +1258,232 @@ app.get('/trader-dna', requireAuth, async (req, res) => {
   }
 })
 
+// GET /trader-dna/pdf — generate print-friendly PDF of stored DNA
+app.get('/trader-dna/pdf', requireAuth, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } })
+    if (!user) return res.status(404).json({ error: 'User not found' })
+    if (!user.traderDna)
+      return res
+        .status(404)
+        .json({ error: 'No Trader DNA found. Generate your profile first.' })
+
+    const dna = user.traderDna
+    const PDFDocument = (await import('pdfkit')).default
+
+    const doc = new PDFDocument({ margin: 50, size: 'A4' })
+
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="trader-dna-${new Date()
+        .toISOString()
+        .slice(0, 10)}.pdf"`
+    )
+    doc.pipe(res)
+
+    // ── HEADER ──
+    doc.rect(0, 0, doc.page.width, 80).fill('#111111')
+    doc
+      .fill('#ffffff')
+      .fontSize(22)
+      .font('Helvetica-Bold')
+      .text('TRADER DNA™', 50, 25)
+    doc
+      .fontSize(10)
+      .font('Helvetica')
+      .text('Red October Systems · Liquidity Lab', 50, 52)
+    doc
+      .fill('#ef4444')
+      .fontSize(10)
+      .text(
+        `Generated ${new Date().toLocaleDateString('en-US', {
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric'
+        })}`,
+        50,
+        65
+      )
+
+    doc.moveDown(3)
+
+    // ── TRADER TYPE ──
+    doc
+      .fill('#111111')
+      .fontSize(9)
+      .font('Helvetica-Bold')
+      .text('YOUR TRADER TYPE', { characterSpacing: 2 })
+    doc.moveDown(0.3)
+    doc
+      .fontSize(20)
+      .font('Helvetica-Bold')
+      .text(dna.traderType || '—')
+    doc.moveDown(0.5)
+    doc
+      .fontSize(10)
+      .font('Helvetica')
+      .fill('#444444')
+      .text(dna.overallAssessment || '', { lineGap: 4 })
+
+    doc.moveDown(1)
+
+    // ── STATS ROW ──
+    const statsY = doc.y
+    const colW = (doc.page.width - 100) / 3
+
+    const stats = [
+      { label: 'TRADES', value: String(dna.totalTrades ?? '—') },
+      {
+        label: 'WIN RATE',
+        value: dna.winRate != null ? `${Math.round(dna.winRate * 100)}%` : '—'
+      },
+      {
+        label: 'AVG RR',
+        value:
+          dna.avgRR != null && Number(dna.avgRR) !== 0
+            ? `${Number(dna.avgRR).toFixed(2)}R`
+            : '—'
+      }
+    ]
+
+    stats.forEach((s, i) => {
+      const x = 50 + i * colW
+      doc.rect(x, statsY, colW - 8, 52).fill('#f5f5f5')
+      doc
+        .fill('#888888')
+        .fontSize(8)
+        .font('Helvetica-Bold')
+        .text(s.label, x + 10, statsY + 8, {
+          width: colW - 20,
+          align: 'center',
+          characterSpacing: 1
+        })
+      doc
+        .fill('#111111')
+        .fontSize(18)
+        .font('Helvetica-Bold')
+        .text(s.value, x + 10, statsY + 22, {
+          width: colW - 20,
+          align: 'center'
+        })
+    })
+
+    doc.y = statsY + 62
+    doc.moveDown(1)
+
+    // ── DIVIDER ──
+    function divider () {
+      doc
+        .moveTo(50, doc.y)
+        .lineTo(doc.page.width - 50, doc.y)
+        .stroke('#dddddd')
+      doc.moveDown(0.8)
+    }
+
+    // ── SECTION HEADER ──
+    function sectionHeader (title, color = '#111111') {
+      doc
+        .fill(color)
+        .fontSize(8)
+        .font('Helvetica-Bold')
+        .text(title, { characterSpacing: 2 })
+      doc.moveDown(0.4)
+    }
+
+    // ── STRENGTHS ──
+    divider()
+    sectionHeader('STRENGTHS', '#16a34a')
+    ;(dna.strengths || []).forEach(s => {
+      doc.fill('#16a34a').fontSize(10).text('✓ ', { continued: true })
+      doc.fill('#333333').font('Helvetica').text(s, { lineGap: 3 })
+    })
+
+    doc.moveDown(0.8)
+
+    // ── WEAKNESSES ──
+    divider()
+    sectionHeader('WEAKNESSES', '#dc2626')
+    ;(dna.weaknesses || []).forEach(w => {
+      doc.fill('#dc2626').fontSize(10).text('✗ ', { continued: true })
+      doc.fill('#333333').font('Helvetica').text(w, { lineGap: 3 })
+    })
+
+    doc.moveDown(0.8)
+
+    // ── SESSIONS & SETUPS ──
+    divider()
+    const gridY = doc.y
+    const halfW = (doc.page.width - 108) / 2
+
+    function infoBox (x, y, label, value, color) {
+      doc.rect(x, y, halfW, 60).fill('#f9f9f9')
+      doc
+        .fill(color)
+        .fontSize(7)
+        .font('Helvetica-Bold')
+        .text(label, x + 8, y + 8, { width: halfW - 16, characterSpacing: 1 })
+      doc
+        .fill('#222222')
+        .fontSize(9)
+        .font('Helvetica')
+        .text(value || '—', x + 8, y + 20, { width: halfW - 16, lineGap: 2 })
+    }
+
+    infoBox(50, gridY, 'BEST SESSION', dna.bestSession, '#16a34a')
+    infoBox(58 + halfW, gridY, 'WORST SESSION', dna.worstSession, '#dc2626')
+    doc.y = gridY + 68
+    const gridY2 = doc.y
+    infoBox(50, gridY2, 'BEST SETUP', dna.bestSetup, '#ca8a04')
+    infoBox(58 + halfW, gridY2, 'WORST SETUP', dna.worstSetup, '#ea580c')
+    doc.y = gridY2 + 68
+
+    doc.moveDown(0.8)
+
+    // ── PATTERN BIAS ──
+    if (dna.patternBias) {
+      divider()
+      sectionHeader('PATTERN BIAS')
+      doc
+        .fill('#333333')
+        .fontSize(10)
+        .font('Helvetica')
+        .text(dna.patternBias, { lineGap: 3 })
+      doc.moveDown(0.8)
+    }
+
+    // ── COACHING FOCUS ──
+    divider()
+    sectionHeader('🎯 COACHING FOCUS THIS WEEK', '#b45309')
+    doc.rect(50, doc.y, doc.page.width - 100, 1).fill('#f59e0b')
+    doc.moveDown(0.3)
+    doc
+      .fill('#111111')
+      .fontSize(11)
+      .font('Helvetica-Bold')
+      .text(dna.coachingFocus || '—', { lineGap: 4 })
+
+    // ── FOOTER ──
+    doc.moveDown(2)
+    divider()
+    doc
+      .fill('#999999')
+      .fontSize(8)
+      .font('Helvetica')
+      .text(
+        'Red October Systems · app.redoctobersystems.com · Powered by Claude AI',
+        { align: 'center' }
+      )
+
+    doc.end()
+  } catch (err) {
+    console.error('PDF generation error:', err)
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'PDF generation failed' })
+    }
+  }
+})
+
 // POST /trader-dna — generate fresh DNA and store it
 app.post('/trader-dna', requireAuth, async (req, res) => {
   try {
