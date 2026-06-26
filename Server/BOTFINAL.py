@@ -1902,6 +1902,7 @@ def main_loop():
                         if (
                             plan["rr_tp2"] is not None
                             and plan["rr_tp2"] >= MIN_RR_TO_ALERT
+                            and trade_state == "ACTIONABLE"
                         ):
                             print(
                                 f"[DETECTED] {symbol} {sweep_dir} "
