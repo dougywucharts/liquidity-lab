@@ -1153,6 +1153,45 @@ function LightweightExecutionChart({ event }) {
           title,
         });
     });
+
+    // ── EMAs ──
+    function calcEma(data, period) {
+      const k = 2 / (period + 1);
+      let ema = data[0].close;
+      return data.map((d, i) => {
+        if (i === 0) return { time: d.time, value: ema };
+        ema = d.close * k + ema * (1 - k);
+        return { time: d.time, value: ema };
+      });
+    }
+
+    const ema9Series = chart.addSeries(LineSeries, {
+      color: "#a78bfa",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    ema9Series.setData(calcEma(event.chartCandles, 9));
+
+    const ema55Series = chart.addSeries(LineSeries, {
+      color: "#f6c453",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    ema55Series.setData(calcEma(event.chartCandles, 55));
+
+    const ema99Series = chart.addSeries(LineSeries, {
+      color: "#fb7185",
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    ema99Series.setData(calcEma(event.chartCandles, 99));
+
     chart.timeScale().fitContent();
     const resize = () => {
       chart.applyOptions({

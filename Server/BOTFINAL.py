@@ -90,8 +90,7 @@ CONFIRM_MAX_BARS = 3
 MIN_SETUP_STRENGTH = 38  # [FILTER 3] was 5
 
 # Bias alignment gate
-COUNTER_TREND_MIN_STRENGTH = 65  # [FILTER 8] counter-trend sweeps need this
-
+COUNTER_TREND_MIN_STRENGTH = 50  # [FILTER 8] counter-trend sweeps need this
 # Reclaim staleness
 RECLAIM_MAX_AGE_MINUTES = 15  # [FILTER 10] reclaims older than this are stale
 
@@ -109,7 +108,9 @@ DETECTED_COOLDOWN = 240  # [FILTER 7] was 30
 RECLAIM_COOLDOWN = 45  # was 30
 ACCEPTED_COOLDOWN = 45  # was 30
 CONFIRMED_COOLDOWN = 45  # was 30
-CONFIRMED_REQUIRES_RECLAIM_WINDOW = 900  # CONFIRMED only fires if RECLAIM happened within 15 min
+CONFIRMED_REQUIRES_RECLAIM_WINDOW = (
+    900  # CONFIRMED only fires if RECLAIM happened within 15 min
+)
 DOUBLE_SWEEP_COOLDOWN = 240
 PING_COOLDOWN = 120
 
@@ -1787,6 +1788,11 @@ def main_loop():
                     liquidity_type,
                 ) = detect_setup_sweep(setup_df, map_df)
 
+                if "SUI" in symbol:
+                    print(
+                        f"   [SUI DEBUG] flag={sweep_flag} dir={sweep_dir} strength={strength} liq={liquidity_type}"
+                    )
+
                 dbg(
                     f"   [SETUP CHECK] flag={sweep_flag} dir={sweep_dir} "
                     f"strength={strength} liq={liquidity_type}"
@@ -2145,13 +2151,7 @@ def main_loop():
                         trigger_df, direction, plan["entry"]
                     ):
                         dbg("   [CONFIRM CHECK] True")
-                        # Gate: CONFIRMED requires a prior RECLAIM within 15 minutes
-                        reclaim_age = now - last_reclaim.get(symbol, 0)
-                        if reclaim_age > 900:  # 15 minutes in seconds
-                            dbg(
-                                f"   [CONFIRM SKIP] {symbol} — no recent RECLAIM (last was {reclaim_age:.0f}s ago)"
-                            )
-                        elif now - last_confirmed.get(symbol, 0) > CONFIRMED_COOLDOWN:
+                        if now - last_confirmed.get(symbol, 0) > CONFIRMED_COOLDOWN:
                             if (
                                 plan["rr_tp2"] is not None
                                 and plan["rr_tp2"] >= MIN_RR_TO_ALERT

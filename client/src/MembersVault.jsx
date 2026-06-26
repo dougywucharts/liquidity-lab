@@ -1956,6 +1956,34 @@ function TraderDnaPage({
               ⬇️ Export Profile
             </button>
             <button
+              onClick={async () => {
+                const token = localStorage.getItem("token") || "";
+                const res = await fetch(`${API_BASE}/trader-dna/pdf`, {
+                  headers: { Authorization: `Bearer ${token}` },
+                });
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `trader-dna-${new Date().toISOString().slice(0, 10)}.pdf`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              style={{
+                appearance: "none",
+                border: `1px solid rgba(246,196,83,0.3)`,
+                borderRadius: 12,
+                padding: "10px 24px",
+                background: "rgba(246,196,83,0.08)",
+                color: "#f6c453",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              📄 Download PDF
+            </button>
+            <button
               onClick={generate}
               style={{
                 appearance: "none",
