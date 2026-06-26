@@ -109,6 +109,7 @@ DETECTED_COOLDOWN = 240  # [FILTER 7] was 30
 RECLAIM_COOLDOWN = 45  # was 30
 ACCEPTED_COOLDOWN = 45  # was 30
 CONFIRMED_COOLDOWN = 45  # was 30
+CONFIRMED_REQUIRES_RECLAIM_WINDOW = 900  # CONFIRMED only fires if RECLAIM happened within 15 min
 DOUBLE_SWEEP_COOLDOWN = 240
 PING_COOLDOWN = 120
 
@@ -1770,6 +1771,11 @@ def main_loop():
                     trigger_bar_state[symbol] = {"ts": trigger_ts, "seen": 1}
                 else:
                     prev_state["seen"] += 1
+                    if prev_state["seen"] > 1:
+                        dbg(
+                            f"   [SKIP] {symbol} — same bar already processed, skipping"
+                        )
+                        continue
 
                 (
                     sweep_flag,
@@ -2139,7 +2145,13 @@ def main_loop():
                         trigger_df, direction, plan["entry"]
                     ):
                         dbg("   [CONFIRM CHECK] True")
-                        if now - last_confirmed.get(symbol, 0) > CONFIRMED_COOLDOWN:
+                        # Gate: CONFIRMED requires a prior RECLAIM within 15 minutes
+                        reclaim_age = now - last_reclaim.get(symbol, 0)
+                        if reclaim_age > 900:  # 15 minutes in seconds
+                            dbg(
+                                f"   [CONFIRM SKIP] {symbol} — no recent RECLAIM (last was {reclaim_age:.0f}s ago)"
+                            )
+                        elif now - last_confirmed.get(symbol, 0) > CONFIRMED_COOLDOWN:
                             if (
                                 plan["rr_tp2"] is not None
                                 and plan["rr_tp2"] >= MIN_RR_TO_ALERT
