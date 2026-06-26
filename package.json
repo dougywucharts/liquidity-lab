@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",
+    "lightweight-charts": "^5.2.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
@@ -24,5 +25,18 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
     "vite": "^8.0.0"
-  }
+  },
+  "description": "This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.",
+  "main": "eslint.config.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dougywucharts/liquidity-lab.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/dougywucharts/liquidity-lab/issues"
+  },
+  "homepage": "https://github.com/dougywucharts/liquidity-lab#readme"
 }
