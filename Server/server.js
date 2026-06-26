@@ -1395,8 +1395,11 @@ app.get('/trader-dna/pdf', requireAuth, async (req, res) => {
     divider()
     sectionHeader('STRENGTHS', '#16a34a')
     ;(dna.strengths || []).forEach(s => {
-      doc.fill('#16a34a').fontSize(10).text('✓ ', { continued: true })
-      doc.fill('#333333').font('Helvetica').text(s, { lineGap: 3 })
+      doc.fill('#16a34a').fontSize(10).text('+ ', { continued: true })
+      doc
+        .fill('#333333')
+        .font('Helvetica')
+        .text(String(s).replace(/^['"]/, ''), { lineGap: 3 })
     })
 
     doc.moveDown(0.8)
@@ -1405,8 +1408,11 @@ app.get('/trader-dna/pdf', requireAuth, async (req, res) => {
     divider()
     sectionHeader('WEAKNESSES', '#dc2626')
     ;(dna.weaknesses || []).forEach(w => {
-      doc.fill('#dc2626').fontSize(10).text('✗ ', { continued: true })
-      doc.fill('#333333').font('Helvetica').text(w, { lineGap: 3 })
+      doc.fill('#dc2626').fontSize(10).text('- ', { continued: true })
+      doc
+        .fill('#333333')
+        .font('Helvetica')
+        .text(String(w).replace(/^['"]/, ''), { lineGap: 3 })
     })
 
     doc.moveDown(0.8)
@@ -1454,7 +1460,7 @@ app.get('/trader-dna/pdf', requireAuth, async (req, res) => {
 
     // ── COACHING FOCUS ──
     divider()
-    sectionHeader('🎯 COACHING FOCUS THIS WEEK', '#b45309')
+    sectionHeader('COACHING FOCUS THIS WEEK', '#b45309')
     doc.rect(50, doc.y, doc.page.width - 100, 1).fill('#f59e0b')
     doc.moveDown(0.3)
     doc
