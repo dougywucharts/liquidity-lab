@@ -1341,7 +1341,7 @@ def post_sweep_to_radar(
         # Block alerts where the detected pattern contradicts the sweep direction
         # e.g. a Failed Reclaim on a bullish sweep = price didn't actually reclaim
         if pattern_contradicts_direction(pattern, direction):
-            logger.info(
+            print(
                 f"[CONTRADICTION BLOCK] {symbol} {direction} blocked — "
                 f"pattern '{pattern}' contradicts direction"
             )
