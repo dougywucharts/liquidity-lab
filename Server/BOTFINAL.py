@@ -1820,14 +1820,21 @@ def main_loop():
                         prev_meta=prev_meta,
                     )
 
+                    _anchor = (
+                        map_level
+                        if (
+                            map_level is not None
+                            and liquidity_type in ("Equal Highs", "Equal Lows")
+                        )
+                        else setup_level
+                    )
                     plan = build_rr_plan(
                         direction=sweep_dir,
                         trigger_df=trigger_df,
                         map_levels=get_map_liquidity_levels(map_df),
-                        sweep_level=setup_level,
+                        sweep_level=_anchor,
                         reclaim_level=trigger_df.iloc[-1]["close"],
                     )
-
                     dbg(
                         f"   [SETUP SWEEP] dir={sweep_dir} strength={strength} "
                         f"variant={variant} rr1={rr_text(plan['rr_tp1'])} "
@@ -1980,19 +1987,35 @@ def main_loop():
                     sweep_ts = sm.get("sweep_ts")  # [FILTER 15]
 
                     # [FILTER 10] Pass sweep_ts for staleness check
+                    _reclaim_level = (
+                        map_level
+                        if (
+                            map_level is not None
+                            and liquidity_type in ("Equal Highs", "Equal Lows")
+                        )
+                        else setup_level
+                    )
                     trigger_state = detect_reclaim_or_acceptance(
                         trigger_df,
                         direction,
-                        setup_level,
+                        _reclaim_level,
                         sweep_timestamp=sweep_ts,
                     )
                     dbg(f"   [TRIGGER STATE] {trigger_state}")
 
+                    _anchor = (
+                        map_level
+                        if (
+                            map_level is not None
+                            and liquidity_type in ("Equal Highs", "Equal Lows")
+                        )
+                        else setup_level
+                    )
                     plan = build_rr_plan(
                         direction=direction,
                         trigger_df=trigger_df,
                         map_levels=get_map_liquidity_levels(map_df),
-                        sweep_level=setup_level,
+                        sweep_level=_anchor,
                         reclaim_level=trigger_df.iloc[-1]["close"],
                     )
 
