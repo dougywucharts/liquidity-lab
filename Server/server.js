@@ -2,6 +2,7 @@ import 'dotenv/config'
 import Anthropic from '@anthropic-ai/sdk'
 import express from 'express'
 import cors from 'cors'
+import fetch from 'node-fetch'
 
 const app = express() // MUST come before app.use
 
@@ -20,18 +21,17 @@ app.use(
 app.get('/candles', async (req, res) => {
   try {
     const { pair = 'BTC/USDT', timeframe = '1m', limit = 300 } = req.query
-    // Convert pair format: "BTC/USDT" -> "BTC-USDT"
     const symbol = pair.replace('/USDT', '').replace(':USDT', '') + '-USDT'
     const tf = timeframe
-    const url = `https://openapi.blofin.com/api/v1/market/candles?instId=${symbol}-USDT&bar=${tf}&limit=${limit}`
+    const url = `https://openapi.blofin.com/api/v1/market/candles?instId=${symbol}&bar=${tf}&limit=${limit}`
+    console.log('Candles URL:', url)
 
     const response = await fetch(url)
     const json = await response.json()
+    console.log('Blofin response:', JSON.stringify(json).slice(0, 200))
 
-    if (!json?.data?.length) return res.json({ candles: [] })
+    if (!json?.data?.length) return res.json({ candles: [], debug: json })
 
-    // Blofin returns: [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
-    // LWC expects: { time, open, high, low, close }
     const candles = json.data
       .map(c => ({
         time: Math.floor(Number(c[0]) / 1000),
