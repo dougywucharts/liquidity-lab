@@ -1145,7 +1145,8 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
   }, []);
 
   useEffect(() => {
-    if (!pair || !chartRef.current || !candleSeriesRef.current) return;
+    if (!pair || !chartReady || !chartRef.current || !candleSeriesRef.current)
+      return;
     let cancelled = false;
 
     async function fetchAndDraw() {
@@ -1170,10 +1171,10 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
 
         // Price lines
         [
-          ["E", event.entry, "#f6c453"],
-          ["S", event.stop, "#fb7185"],
-          ["T1", event.tp1, "#4ade80"],
-          ["T2", event.tp2, "#4ade80"],
+          ["E", entry, "#f6c453"],
+          ["S", stop, "#fb7185"],
+          ["T1", tp1, "#4ade80"],
+          ["T2", tp2, "#4ade80"],
         ].forEach(([title, value, color]) => {
           if (Number.isFinite(Number(value)))
             candles.createPriceLine({
@@ -1231,7 +1232,7 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
     return () => {
       cancelled = true;
     };
-  }, [pair, timeframe, entry, stop, tp1, tp2]);
+  }, [pair, timeframe, entry, stop, tp1, tp2, chartReady]);
 
   if (error)
     return (
