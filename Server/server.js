@@ -11,12 +11,125 @@ app.use(
     origin: [
       'https://redoctobersystems.com',
       'https://www.redoctobersystems.com',
-      'https://app.redoctobersystems.com',
-      'https://liquidity-lab-git-main-dougywucharts-7220s-projects.vercel.app'
+      'https://app.redoctobersystems.com'
     ],
     credentials: true
   })
 )
+
+app.post('/briefing', requireAuth, async (req, res) => {
+  try {
+    if (!anthropic || !ENABLE_AI)
+      return res.status(503).json({ error: 'AI not enabled' })
+
+    // Grab last 50 radar events
+    const recentEvents = events.slice(0, 50)
+
+    // Get user's Trader DNA if they have it
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } })
+    const dna = user?.traderDna || null
+
+    // Get current UTC hour to determine session
+    const utcHour = new Date().getUTCHours()
+    const session =
+      utcHour >= 8 && utcHour < 12
+        ? 'New York Open'
+        : utcHour >= 13 && utcHour < 17
+        ? 'New York Midday'
+        : utcHour >= 0 && utcHour < 6
+        ? 'London'
+        : 'Asia'
+
+    // Summarize active pairs
+    const pairSummary = {}
+    recentEvents.forEach(evt => {
+      const key = `${evt.pair}|${evt.directionBias}`
+      if (!pairSummary[key])
+        pairSummary[key] = {
+          pair: evt.pair,
+          direction: evt.directionBias,
+          count: 0,
+          sweepTypes: []
+        }
+      pairSummary[key].count++
+      if (!pairSummary[key].sweepTypes.includes(evt.sweepType))
+        pairSummary[key].sweepTypes.push(evt.sweepType)
+    })
+    const topPairs = Object.values(pairSummary)
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8)
+
+    const prompt = `You are a trading session briefing assistant for a liquidity sweep trader.
+
+Current session: ${session}
+UTC time: ${new Date().toUTCString()}
+
+TOP ACTIVE PAIRS (from live radar, last hour):
+${topPairs
+  .map(
+    p =>
+      `- ${p.pair} ${p.direction}: ${
+        p.count
+      } signals, types: ${p.sweepTypes.join(', ')}`
+  )
+  .join('\n')}
+
+TRADER DNA (their personal profile):
+${
+  dna
+    ? `
+- Trader type: ${dna.traderType}
+- Best session: ${dna.bestSession}
+- Worst session: ${dna.worstSession}
+- Best setup: ${dna.bestSetup}
+- Worst setup: ${dna.worstSetup}
+- Coaching focus: ${dna.coachingFocus}
+- Win rate: ${
+        dna.winRate != null ? (dna.winRate * 100).toFixed(0) + '%' : 'N/A'
+      }
+`
+    : 'No Trader DNA available yet.'
+}
+
+Generate a pre-session briefing. Be direct, specific, and reference actual pairs and setups from the data above. No fluff.
+
+Return ONLY a valid JSON object:
+{
+  "headline": "<one punchy sentence about today's market conditions>",
+  "sessionContext": "<1-2 sentences about the current/upcoming session>",
+  "topWatchlist": [
+    { "pair": "<pair>", "direction": "<Long|Short>", "reason": "<why this pair is in play today>" }
+  ],
+  "dnaWarning": "<one sentence personal warning based on their DNA — what to avoid today>",
+  "dnaTip": "<one sentence personal edge based on their DNA — what to lean into today>",
+  "focusForSession": "<the single most important thing to do this session>"
+}`
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 1000,
+      messages: [{ role: 'user', content: prompt }]
+    })
+
+    const rawText = response.content
+      .filter(b => b.type === 'text')
+      .map(b => b.text)
+      .join('')
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) throw new Error('No JSON returned')
+    const briefing = JSON.parse(jsonMatch[0])
+
+    res.json({
+      ok: true,
+      briefing,
+      session,
+      generatedAt: new Date().toISOString()
+    })
+  } catch (err) {
+    console.error('Briefing error:', err)
+    res.status(500).json({ error: 'Briefing generation failed' })
+  }
+})
 
 app.get('/candles', async (req, res) => {
   try {

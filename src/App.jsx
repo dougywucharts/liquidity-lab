@@ -1243,6 +1243,280 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
   return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
 }
 
+// ─── BriefingPanel ───────────────────────────────────────────────────────────
+
+function BriefingPanel({ token }) {
+  const [briefing, setBriefing] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [session, setSession] = useState(null);
+  const [generatedAt, setGeneratedAt] = useState(null);
+  const [open, setOpen] = useState(false);
+
+  async function fetchBriefing() {
+    try {
+      setLoading(true);
+      const data = await apiFetch("/briefing", { method: "POST" });
+      setBriefing(data.briefing);
+      setSession(data.session);
+      setGeneratedAt(data.generatedAt);
+      setOpen(true);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        borderRadius: 20,
+        border: `1px solid ${palette.border}`,
+        background: palette.panel,
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          padding: "12px 16px",
+          borderBottom: open ? `1px solid ${palette.borderSoft}` : "none",
+        }}
+      >
+        <div>
+          <div style={{ fontWeight: 900, fontSize: 14 }}>
+            🌅 Pre-Session Briefing
+          </div>
+          <div style={{ fontSize: 11, color: palette.textDim, marginTop: 2 }}>
+            {generatedAt
+              ? `Generated ${new Date(generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+              : "AI-powered session prep"}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {session && <Pill tone="gold">{session}</Pill>}
+          <button
+            style={styles.primaryButton}
+            onClick={fetchBriefing}
+            type="button"
+            disabled={loading}
+          >
+            {loading
+              ? "Generating…"
+              : briefing
+                ? "Refresh"
+                : "Generate Briefing"}
+          </button>
+          {briefing && (
+            <button
+              style={styles.button}
+              onClick={() => setOpen((p) => !p)}
+              type="button"
+            >
+              {open ? "Hide" : "Show"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {open && briefing && (
+        <div style={{ padding: 14, display: "grid", gap: 10 }}>
+          {/* Headline */}
+          <div
+            style={{
+              padding: "12px 14px",
+              borderRadius: 14,
+              background: "rgba(239,68,68,0.07)",
+              border: "1px solid rgba(239,68,68,0.2)",
+              fontSize: 15,
+              fontWeight: 900,
+              color: palette.text,
+            }}
+          >
+            {briefing.headline}
+          </div>
+
+          {/* Session context */}
+          <div
+            style={{
+              padding: "10px 13px",
+              borderRadius: 12,
+              background: palette.card,
+              border: `1px solid ${palette.border}`,
+              fontSize: 13,
+              color: palette.textSoft,
+              lineHeight: 1.55,
+            }}
+          >
+            {briefing.sessionContext}
+          </div>
+
+          {/* Watchlist */}
+          <div>
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 900,
+                letterSpacing: 2,
+                textTransform: "uppercase",
+                color: palette.textDim,
+                marginBottom: 8,
+              }}
+            >
+              Watchlist
+            </div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {(briefing.topWatchlist || []).map((item, i) => {
+                const tone = directionTone(item.direction);
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderRadius: 12,
+                      background: palette.card,
+                      border: `1px solid ${palette.border}`,
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: 7,
+                          alignItems: "center",
+                          marginBottom: 4,
+                        }}
+                      >
+                        <span style={{ fontWeight: 900, fontSize: 13 }}>
+                          {item.pair}
+                        </span>
+                        <Pill tone={tone}>{item.direction}</Pill>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: palette.textSoft,
+                          lineHeight: 1.45,
+                        }}
+                      >
+                        {item.reason}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* DNA row */}
+          <div
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
+          >
+            <div
+              style={{
+                padding: "10px 13px",
+                borderRadius: 12,
+                background: "rgba(251,113,133,0.06)",
+                border: "1px solid rgba(251,113,133,0.2)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 900,
+                  letterSpacing: 1.5,
+                  textTransform: "uppercase",
+                  color: palette.short,
+                  marginBottom: 6,
+                }}
+              >
+                ⚠ Avoid Today
+              </div>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: palette.textSoft,
+                  lineHeight: 1.5,
+                }}
+              >
+                {briefing.dnaWarning}
+              </div>
+            </div>
+            <div
+              style={{
+                padding: "10px 13px",
+                borderRadius: 12,
+                background: "rgba(74,222,128,0.06)",
+                border: "1px solid rgba(74,222,128,0.2)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 900,
+                  letterSpacing: 1.5,
+                  textTransform: "uppercase",
+                  color: palette.long,
+                  marginBottom: 6,
+                }}
+              >
+                ✓ Lean Into
+              </div>
+              <div
+                style={{
+                  fontSize: 13,
+                  color: palette.textSoft,
+                  lineHeight: 1.5,
+                }}
+              >
+                {briefing.dnaTip}
+              </div>
+            </div>
+          </div>
+
+          {/* Focus */}
+          <div
+            style={{
+              padding: "11px 14px",
+              borderRadius: 12,
+              background: "rgba(246,196,83,0.06)",
+              border: "1px solid rgba(246,196,83,0.2)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 900,
+                letterSpacing: 1.5,
+                textTransform: "uppercase",
+                color: palette.gold,
+                marginBottom: 6,
+              }}
+            >
+              🎯 Session Focus
+            </div>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 800,
+                color: palette.text,
+                lineHeight: 1.5,
+              }}
+            >
+              {briefing.focusForSession}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── FieldLabel ───────────────────────────────────────────────────────────────
 
 function FieldLabel({ label, children }) {
@@ -2635,6 +2909,8 @@ export default function AppPreBeta() {
 
         {/* SESSION CLOCKS */}
         <SessionClockWidget />
+
+        <BriefingPanel token={getStoredToken()} />
 
         {/* STATS BAR */}
         <StatsBar decisions={loggedDecisions} />
