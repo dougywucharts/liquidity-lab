@@ -1166,16 +1166,16 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
 
         // Price lines
         [
-          ["ENTRY", entry, "#f6c453"],
-          ["STOP", stop, "#fb7185"],
-          ["TP1", tp1, "#4ade80"],
-          ["TP2", tp2, "#4ade80"],
+          ["E", event.entry, "#f6c453"],
+          ["S", event.stop, "#fb7185"],
+          ["T1", event.tp1, "#4ade80"],
+          ["T2", event.tp2, "#4ade80"],
         ].forEach(([title, value, color]) => {
           if (Number.isFinite(Number(value)))
             candles.createPriceLine({
               price: Number(value),
               color,
-              lineWidth: title === "ENTRY" ? 2 : 1,
+              lineWidth: title === "E" ? 2 : 1,
               lineStyle: 2,
               axisLabelVisible: true,
               title,
