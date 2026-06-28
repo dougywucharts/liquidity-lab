@@ -1188,11 +1188,11 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
         });
 
         // EMAs
-        function calcEma(data, period) {
-          if (data.length < period) return [];
+        function calcEma(candles, period) {
+          if (candles.length < period) return [];
           const k = 2 / (period + 1);
-          let ema = data[0].close;
-          return data.map((d, i) => {
+          let ema = candles[0].close;
+          return candles.map((d, i) => {
             if (i === 0) return { time: d.time, value: ema };
             ema = d.close * k + ema * (1 - k);
             return { time: d.time, value: ema };
