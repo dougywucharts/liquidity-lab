@@ -1090,12 +1090,15 @@ function AiReviewPanel({ entry, liveReview, loading, locked }) {
   );
 }
 
-// ─── LightweightExecutionChart ────────────────────────────────────────────────
-
-function LightweightExecutionChart({ event }) {
+function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
   const ref = useRef(null);
+  const chartRef = useRef(null);
+  const candleSeriesRef = useRef(null);
+  const extraSeriesRef = useRef([]);
+  const [error, setError] = useState(null);
+
   useEffect(() => {
-    if (!ref.current || !event?.chartCandles?.length) return;
+    if (!ref.current) return;
     ref.current.innerHTML = "";
     const chart = createChart(ref.current, {
       layout: { background: { color: "#070a0f" }, textColor: "#cbd5e1" },
@@ -1103,12 +1106,18 @@ function LightweightExecutionChart({ event }) {
         vertLines: { color: "rgba(255,255,255,0.04)" },
         horzLines: { color: "rgba(255,255,255,0.04)" },
       },
-      rightPriceScale: { borderColor: "rgba(255,255,255,0.08)" },
+      rightPriceScale: {
+        borderColor: "rgba(255,255,255,0.08)",
+        scaleMargins: { top: 0.08, bottom: 0.08 },
+        minimumWidth: 60,
+      },
       timeScale: { borderColor: "rgba(255,255,255,0.08)", timeVisible: true },
       width: ref.current.clientWidth,
       height: ref.current.clientHeight,
+      devicePixelRatio: window.devicePixelRatio,
     });
-    const candles = chart.addSeries(CandlestickSeries, {
+    chartRef.current = chart;
+    candleSeriesRef.current = chart.addSeries(CandlestickSeries, {
       upColor: "#22c55e",
       downColor: "#ef4444",
       borderUpColor: "#22c55e",
@@ -1116,95 +1125,116 @@ function LightweightExecutionChart({ event }) {
       wickUpColor: "#22c55e",
       wickDownColor: "#ef4444",
     });
-    candles.setData(event.chartCandles);
-    const firstTime = event.chartCandles[0].time;
-    const lastTime = event.chartCandles[event.chartCandles.length - 1].time;
-    function setLevelLine(value, color) {
-      if (!Number.isFinite(Number(value))) return;
-      const line = chart.addSeries(LineSeries, {
-        color,
-        lineWidth: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-      });
-      line.setData([
-        { time: firstTime, value: Number(value) },
-        { time: lastTime, value: Number(value) },
-      ]);
-    }
-    setLevelLine(event.entry, "#fbbf24");
-    setLevelLine(event.stop, "#ef4444");
-    setLevelLine(event.tp1, "#22c55e");
-    setLevelLine(event.tp2, "#16a34a");
-    [
-      ["ENTRY", event.entry, "#f6c453"],
-      ["STOP", event.stop, "#fb7185"],
-      ["TP1", event.tp1, "#4ade80"],
-      ["TP2", event.tp2, "#4ade80"],
-    ].forEach(([title, value, color]) => {
-      if (Number.isFinite(Number(value)))
-        candles.createPriceLine({
-          price: Number(value),
-          color,
-          lineWidth: title === "ENTRY" ? 2 : 1,
-          lineStyle: 2,
-          axisLabelVisible: true,
-          title,
-        });
-    });
-
-    // ── EMAs ──
-    function calcEma(data, period) {
-      const k = 2 / (period + 1);
-      let ema = data[0].close;
-      return data.map((d, i) => {
-        if (i === 0) return { time: d.time, value: ema };
-        ema = d.close * k + ema * (1 - k);
-        return { time: d.time, value: ema };
-      });
-    }
-
-    const ema9Series = chart.addSeries(LineSeries, {
-      color: "#a78bfa",
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    ema9Series.setData(calcEma(event.chartCandles, 9));
-
-    const ema55Series = chart.addSeries(LineSeries, {
-      color: "#f6c453",
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    ema55Series.setData(calcEma(event.chartCandles, 55));
-
-    const ema99Series = chart.addSeries(LineSeries, {
-      color: "#fb7185",
-      lineWidth: 1,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    ema99Series.setData(calcEma(event.chartCandles, 99));
-
-    chart.timeScale().fitContent();
     const resize = () => {
-      chart.applyOptions({
-        width: ref.current.clientWidth,
-        height: ref.current.clientHeight,
-      });
+      if (ref.current && chartRef.current)
+        chartRef.current.applyOptions({
+          width: ref.current.clientWidth,
+          height: ref.current.clientHeight,
+        });
     };
     window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("resize", resize);
       chart.remove();
+      chartRef.current = null;
+      candleSeriesRef.current = null;
     };
-  }, [event]);
+  }, []);
+
+  useEffect(() => {
+    if (!pair || !chartRef.current || !candleSeriesRef.current) return;
+    let cancelled = false;
+
+    async function fetchAndDraw() {
+      try {
+        const data = await apiFetch(
+          `/candles?pair=${encodeURIComponent(pair)}&timeframe=${timeframe || "1m"}&limit=300`,
+        );
+        if (cancelled || !data?.candles?.length) return;
+
+        const chart = chartRef.current;
+        const candles = candleSeriesRef.current;
+
+        extraSeriesRef.current.forEach((s) => {
+          try {
+            chart.removeSeries(s);
+          } catch (e) {}
+        });
+        extraSeriesRef.current = [];
+
+        candles.setData(data.candles);
+
+        // Price lines
+        [
+          ["ENTRY", entry, "#f6c453"],
+          ["STOP", stop, "#fb7185"],
+          ["TP1", tp1, "#4ade80"],
+          ["TP2", tp2, "#4ade80"],
+        ].forEach(([title, value, color]) => {
+          if (Number.isFinite(Number(value)))
+            candles.createPriceLine({
+              price: Number(value),
+              color,
+              lineWidth: title === "ENTRY" ? 2 : 1,
+              lineStyle: 2,
+              axisLabelVisible: true,
+              title,
+            });
+        });
+
+        // EMAs
+        function calcEma(data, period) {
+          if (data.length < period) return [];
+          const k = 2 / (period + 1);
+          let ema = data[0].close;
+          return data.map((d, i) => {
+            if (i === 0) return { time: d.time, value: ema };
+            ema = d.close * k + ema * (1 - k);
+            return { time: d.time, value: ema };
+          });
+        }
+
+        function addTracked(options) {
+          const s = chart.addSeries(LineSeries, options);
+          extraSeriesRef.current.push(s);
+          return s;
+        }
+
+        [
+          [9, "#a78bfa"],
+          [55, "#f6c453"],
+          [99, "#fb7185"],
+        ].forEach(([period, color]) => {
+          const s = addTracked({
+            color,
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+          });
+          const emaData = calcEma(data.candles, period);
+          if (emaData.length) s.setData(emaData);
+        });
+
+        chart.timeScale().fitContent();
+        setError(null);
+      } catch (err) {
+        if (!cancelled) setError("Failed to load candles");
+      }
+    }
+
+    fetchAndDraw();
+    return () => {
+      cancelled = true;
+    };
+  }, [pair, timeframe, entry, stop, tp1, tp2]);
+
+  if (error)
+    return (
+      <div style={{ color: palette.textSoft, fontSize: 13, padding: 16 }}>
+        {error}
+      </div>
+    );
   return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
 }
 
@@ -1627,6 +1657,7 @@ function apiFetch(path, options = {}, token = "") {
 export default function AppPreBeta() {
   const [events, setEvents] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [hasLwcCandles, setHasLwcCandles] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [logMode, setLogMode] = useState("event");
   const [showInsights, setShowInsights] = useState(false);
@@ -1815,6 +1846,12 @@ export default function AppPreBeta() {
   }, []);
 
   useEffect(() => {
+    if (selectedEvent?.chartCandles?.length) {
+      setHasLwcCandles(true);
+    }
+  }, [selectedEvent]);
+
+  useEffect(() => {
     if (selectedEvent && logMode === "event") {
       setDecisionForm((prev) => ({
         ...prev,
@@ -1891,7 +1928,7 @@ export default function AppPreBeta() {
       `&symbol=${encodeURIComponent(chartSymbol)}` +
       `&interval=${encodeURIComponent(chartInterval)}` +
       "&hidesidetoolbar=1&symboledit=1&saveimage=0&toolbarbg=F1F3F6&studies=[]&theme=dark&style=1&timezone=Etc%2FUTC&withdateranges=1",
-    [chartReloadKey],
+    [chartSymbol, chartInterval, chartReloadKey],
   );
 
   const waves = useMemo(() => groupWaves(events), [events]);
@@ -1995,6 +2032,16 @@ export default function AppPreBeta() {
     decisionForm.entry,
     decisionForm.stop,
   ]);
+
+  const stableChartEvent = useMemo(
+    () => selectedEvent,
+    [
+      selectedEvent?.id,
+      selectedEvent?.pair,
+      selectedEvent?.timestampUtc,
+      selectedEvent?.chartCandles?.length,
+    ],
+  );
 
   const selectedEventRR = useMemo(
     () =>
@@ -2770,19 +2817,18 @@ export default function AppPreBeta() {
                 height: 440,
                 minHeight: 440,
                 flexShrink: 0,
+                position: "relative",
               }}
             >
-              {selectedEvent?.chartCandles?.length ? (
-                <LightweightExecutionChart event={selectedEvent} />
-              ) : (
-                <iframe
-                  key={chartReloadKey}
-                  src={chartSrc}
-                  style={{ width: "100%", height: "100%", border: "none" }}
-                />
-              )}
+              <LightweightExecutionChart
+                pair={chartPair}
+                timeframe={activeTimeframe}
+                entry={selectedEvent?.entry}
+                stop={selectedEvent?.stop}
+                tp1={selectedEvent?.tp1}
+                tp2={selectedEvent?.tp2}
+              />
             </div>
-
             {/* Exchange bar */}
             <div style={styles.exchangeBar}>
               <span style={styles.exchangeLabel}>Open on</span>

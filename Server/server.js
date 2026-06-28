@@ -17,6 +17,39 @@ app.use(
   })
 )
 
+app.get('/candles', async (req, res) => {
+  try {
+    const { pair = 'BTC/USDT', timeframe = '1m', limit = 300 } = req.query
+    // Convert pair format: "BTC/USDT" -> "BTC-USDT"
+    const symbol = pair.replace('/USDT', '').replace(':USDT', '') + '-USDT'
+    const tf = timeframe
+    const url = `https://openapi.blofin.com/api/v1/market/candles?instId=${symbol}-USDT&bar=${tf}&limit=${limit}`
+
+    const response = await fetch(url)
+    const json = await response.json()
+
+    if (!json?.data?.length) return res.json({ candles: [] })
+
+    // Blofin returns: [ts, open, high, low, close, vol, volCcy, volCcyQuote, confirm]
+    // LWC expects: { time, open, high, low, close }
+    const candles = json.data
+      .map(c => ({
+        time: Math.floor(Number(c[0]) / 1000),
+        open: Number(c[1]),
+        high: Number(c[2]),
+        low: Number(c[3]),
+        close: Number(c[4])
+      }))
+      .filter(c => c.open && c.high && c.low && c.close)
+      .sort((a, b) => a.time - b.time)
+
+    res.json({ candles })
+  } catch (err) {
+    console.error('Candles error:', err)
+    res.status(500).json({ candles: [], error: err.message })
+  }
+})
+
 // Stripe webhook needs raw body — must be before express.json()
 app.use('/stripe/webhook', express.raw({ type: 'application/json' }))
 
