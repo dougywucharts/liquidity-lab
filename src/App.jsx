@@ -1096,6 +1096,7 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
   const candleSeriesRef = useRef(null);
   const extraSeriesRef = useRef([]);
   const [error, setError] = useState(null);
+  const [chartReady, setChartReady] = useState(false);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -1133,7 +1134,9 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
         });
     };
     window.addEventListener("resize", resize);
+    setChartReady(true); // ← add this
     return () => {
+      setChartReady(false); // ← add this
       window.removeEventListener("resize", resize);
       chart.remove();
       chartRef.current = null;
@@ -1147,9 +1150,10 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
 
     async function fetchAndDraw() {
       try {
-        const data = await apiFetch(
-          `/candles?pair=${encodeURIComponent(pair)}&timeframe=${timeframe || "1m"}&limit=300`,
+        const res = await fetch(
+          `${API_BASE}/candles?pair=${encodeURIComponent(pair)}&timeframe=${timeframe || "1m"}&limit=300`,
         );
+        const data = await res.json();
         if (cancelled || !data?.candles?.length) return;
 
         const chart = chartRef.current;
