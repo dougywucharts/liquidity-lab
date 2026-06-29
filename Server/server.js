@@ -1818,7 +1818,14 @@ app.post('/logs', requireAuth, async (req, res) => {
         executionAssessment: aiAnalysis.executionAssessment,
         riskAssessment: aiAnalysis.riskAssessment,
         biasAlignment: aiAnalysis.biasAlignment,
-        usedScreenshot: aiAnalysis.usedScreenshot
+        usedScreenshot: aiAnalysis.usedScreenshot,
+        aiVerdict:
+          aiAnalysis.verdict ||
+          aiAnalysis.tradeVerdict ||
+          aiAnalysis.executionAssessment ||
+          '',
+        aiStrengths: aiAnalysis.strengths || aiAnalysis.whatWasGood || [],
+        aiMistakes: aiAnalysis.mistakes || aiAnalysis.whatNeedsWork || []
       }
     })
 
