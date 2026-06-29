@@ -2,6 +2,93 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { createChart, CandlestickSeries, LineSeries } from "lightweight-charts";
 import BillingPage from "./BillingPage.jsx";
+import MembersVault from "./MembersVault.jsx";
+
+// ─── Mobile responsive styles injected globally ──────────────────────────────
+const mobileCSS = `
+  @media (max-width: 768px) {
+    /* Main 3-col grid → single column stack */
+    .llab-main-grid {
+      grid-template-columns: 1fr !important;
+      height: auto !important;
+    }
+    /* Radar panel height cap on mobile */
+    .llab-radar-panel {
+      height: 280px !important;
+      min-height: 280px !important;
+    }
+    /* Stats bar → 2x2 */
+    .llab-stats-bar {
+      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+    }
+    /* Session clocks → horizontal scroll */
+    .llab-session-clocks {
+      grid-template-columns: repeat(3, minmax(200px,1fr)) !important;
+      overflow-x: auto !important;
+      -webkit-overflow-scrolling: touch !important;
+      padding-bottom: 6px !important;
+    }
+    /* Signal insight bar → 2 rows of 4 */
+    .llab-signal-bar {
+      grid-template-columns: repeat(4, minmax(0,1fr)) !important;
+    }
+    /* Journal form grids → 2 col max */
+    .llab-form-4col {
+      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+    }
+    .llab-form-3col {
+      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+    }
+    .llab-price-levels {
+      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+    }
+    /* Top card row → 2x2 */
+    .llab-top-card-row {
+      grid-template-columns: repeat(2, minmax(0,1fr)) !important;
+    }
+    /* Top bar buttons wrap */
+    .llab-topbar-buttons {
+      gap: 6px !important;
+    }
+    .llab-topbar-buttons button {
+      padding: 7px 10px !important;
+      font-size: 12px !important;
+    }
+    /* Brand text smaller */
+    .llab-brand-title {
+      font-size: 18px !important;
+    }
+    /* Chart min height on mobile */
+    .llab-chart-frame {
+      min-height: 280px !important;
+    }
+    /* QuickClose grid → stack */
+    .llab-quick-close {
+      grid-template-columns: 1fr 1fr !important;
+    }
+    /* Shell padding tighter */
+    .llab-shell {
+      padding: 8px 10px !important;
+      gap: 8px !important;
+    }
+    /* Hide right panel (Decision Context) on mobile — show below chart instead */
+    .llab-right-panel {
+      display: none !important;
+    }
+    /* Mobile-only decision context summary */
+    .llab-mobile-context {
+      display: flex !important;
+    }
+  }
+  @media (min-width: 769px) {
+    .llab-mobile-context { display: none !important; }
+    .llab-right-panel { display: flex !important; }
+  }
+`;
+
+function MobileStyles() {
+  return <style>{mobileCSS}</style>;
+}
 
 const cardButtonReset = {
   appearance: "none",
@@ -104,8 +191,6 @@ const fieldStyle = {
   fontSize: 13,
 };
 
-// ─── helpers ────────────────────────────────────────────────────────────────
-
 function parseEventDate(ts) {
   if (!ts) return null;
   const raw = String(ts).trim();
@@ -176,7 +261,12 @@ function calcPlannedRR(entry, stop, tp1, tp2, rr1, rr2) {
 function sanitizePrice(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n === 0) return "";
-  return parseFloat(n.toPrecision(8)).toString();
+  const str = n.toFixed(10);
+  const trimmed = str.replace(/(\.\d*?)0{4,}\d*$/, "$1").replace(/\.$/, "");
+  const result = parseFloat(trimmed);
+  return Number.isFinite(result)
+    ? result.toString()
+    : n.toFixed(8).replace(/\.?0+$/, "");
 }
 
 function calcRealizedRR(directionBias, entry, stop, exit) {
@@ -203,7 +293,7 @@ function calcRiskAmount(entry, stop) {
 function rrText(rr, maxPlausible = 50) {
   const n = Number(rr);
   if (rr == null || !Number.isFinite(n)) return "—";
-  if (Math.abs(n) > maxPlausible) return "—"; // guard against exit=0 artifacts
+  if (Math.abs(n) > maxPlausible) return "—";
   return `${n.toFixed(2)}R`;
 }
 
@@ -355,27 +445,6 @@ function bestTickerItems(waves, limit = 10) {
     }));
 }
 
-function getTvInterval(tf) {
-  const map = {
-    "1m": "1",
-    "3m": "3",
-    "5m": "5",
-    "15m": "15",
-    "30m": "30",
-    "1h": "60",
-    "4h": "240",
-    "1d": "D",
-    d: "D",
-  };
-  return (
-    map[
-      String(tf || "")
-        .trim()
-        .toLowerCase()
-    ] || "15"
-  );
-}
-
 function getSignalAgeMinutes(timestampUtc) {
   const d = parseEventDate(timestampUtc);
   if (!d) return 999;
@@ -470,12 +539,13 @@ function MiniBox({ label, value, subtext, tone = null }) {
       </div>
       <div
         style={{
-          fontSize: "clamp(13px,0.9vw,17px)",
+          fontSize: "clamp(11px,0.85vw,16px)",
           fontWeight: 900,
           color: isLong ? "#4ade80" : isShort ? "#f87171" : palette.text,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
+          maxWidth: "100%",
         }}
       >
         {value}
@@ -522,6 +592,25 @@ function Divider() {
   );
 }
 
+function FieldLabel({ label, children }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div
+        style={{
+          fontSize: 10,
+          fontWeight: 800,
+          textTransform: "uppercase",
+          letterSpacing: 0.9,
+          color: palette.textDim,
+        }}
+      >
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
 // ─── SmartTicker ─────────────────────────────────────────────────────────────
 
 function SmartTicker({ items, onSelect }) {
@@ -534,9 +623,21 @@ function SmartTicker({ items, onSelect }) {
             padding: "10px 16px",
             fontSize: 12,
             color: palette.textSoft,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
           }}
         >
-          Waiting for high-confidence sweeps…
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: "rgba(74,222,128,0.5)",
+              display: "inline-block",
+            }}
+          />
+          Radar Active — Scanning markets for high-confidence sweeps
         </div>
       </div>
     );
@@ -661,6 +762,7 @@ function SessionClockWidget() {
       key: "ny",
       label: "New York",
       tzLabel: "NY",
+      utcLabel: "UTC-4/5",
       timeZone: "America/New_York",
       localPrimeStart: 8,
       localPrimeEnd: 12,
@@ -669,6 +771,7 @@ function SessionClockWidget() {
       key: "london",
       label: "London",
       tzLabel: "LDN",
+      utcLabel: "UTC+0/1",
       timeZone: "Europe/London",
       localPrimeStart: 3,
       localPrimeEnd: 6,
@@ -677,9 +780,10 @@ function SessionClockWidget() {
       key: "asia",
       label: "Asia / Tokyo",
       tzLabel: "TKY",
+      utcLabel: "UTC+9",
       timeZone: "Asia/Tokyo",
-      localPrimeStart: 20,
-      localPrimeEnd: 23,
+      localPrimeStart: 9,
+      localPrimeEnd: 12,
     },
   ];
 
@@ -690,9 +794,7 @@ function SessionClockWidget() {
       minute: "2-digit",
       hour12: false,
     }).formatToParts(date);
-    const hh = parts.find((p) => p.type === "hour")?.value || "00";
-    const mm = parts.find((p) => p.type === "minute")?.value || "00";
-    return `${hh}:${mm}`;
+    return `${parts.find((p) => p.type === "hour")?.value || "00"}:${parts.find((p) => p.type === "minute")?.value || "00"}`;
   }
 
   function isPrime(hour, openHour, closeHour) {
@@ -703,6 +805,7 @@ function SessionClockWidget() {
   return (
     <div
       style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}
+      className="llab-session-clocks"
     >
       {sessions.map((session) => {
         const display = formatMilitary(new Date(now), session.timeZone);
@@ -777,10 +880,20 @@ function SessionClockWidget() {
               >
                 {session.tzLabel}
               </span>
+              <span
+                style={{
+                  fontSize: 10,
+                  color: palette.textDim,
+                  marginLeft: 6,
+                  opacity: 0.7,
+                }}
+              >
+                {session.utcLabel}
+              </span>
             </div>
             <div style={{ fontSize: 11, color: palette.textSoft }}>
-              Prime window: {session.localPrimeStart}:00–{session.localPrimeEnd}
-              :00
+              Prime: {session.localPrimeStart}:00–{session.localPrimeEnd}:00{" "}
+              {session.tzLabel}
             </div>
           </div>
         );
@@ -861,26 +974,40 @@ function SignalInsightBar({ event, rr, risk }) {
         gridTemplateColumns: "repeat(7,minmax(0,1fr))",
         gap: 6,
       }}
+      className="llab-signal-bar"
     >
       <InsightBox
         label="ENTRY"
         value={num(event.entry)}
         subtext="retest zone"
+        accent="#60a5fa"
+      />
+      <InsightBox
+        label="STOP"
+        value={num(event.stop)}
+        subtext="invalidation"
+        accent="#ef4444"
       />
       <InsightBox
         label="TP1"
         value={num(event.tp1)}
         subtext={rrText(rr?.rr1)}
+        accent="#4ade80"
       />
       <InsightBox
         label="TP2"
         value={num(event.tp2)}
         subtext={rrText(rr?.rr2)}
+        accent="#86efac"
       />
-      <InsightBox label="RISK Δ" value={risk ? num(risk, 4) : "—"} />
       <InsightBox label="STATE" value={state} accent={stateColor} />
       <InsightBox label="LIVE TTL" value={countdown} />
-      <InsightBox label="SESSION" value={event.session || "—"} />
+      <InsightBox
+        label="SESSION"
+        value={
+          event.session && event.session !== "Off-Hours" ? event.session : "—"
+        }
+      />
     </div>
   );
 }
@@ -1090,6 +1217,8 @@ function AiReviewPanel({ entry, liveReview, loading, locked }) {
   );
 }
 
+// ─── LightweightExecutionChart ────────────────────────────────────────────────
+
 function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
   const ref = useRef(null);
   const chartRef = useRef(null);
@@ -1134,9 +1263,9 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
         });
     };
     window.addEventListener("resize", resize);
-    setChartReady(true); // ← add this
+    setChartReady(true);
     return () => {
-      setChartReady(false); // ← add this
+      setChartReady(false);
       window.removeEventListener("resize", resize);
       chart.remove();
       chartRef.current = null;
@@ -1148,7 +1277,6 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
     if (!pair || !chartReady || !chartRef.current || !candleSeriesRef.current)
       return;
     let cancelled = false;
-
     async function fetchAndDraw() {
       try {
         const res = await fetch(
@@ -1156,20 +1284,15 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
         );
         const data = await res.json();
         if (cancelled || !data?.candles?.length) return;
-
         const chart = chartRef.current;
         const candles = candleSeriesRef.current;
-
         extraSeriesRef.current.forEach((s) => {
           try {
             chart.removeSeries(s);
           } catch (e) {}
         });
         extraSeriesRef.current = [];
-
         candles.setData(data.candles);
-
-        // Price lines
         [
           ["E", entry, "#f6c453"],
           ["S", stop, "#fb7185"],
@@ -1186,8 +1309,6 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
               title,
             });
         });
-
-        // EMAs
         function calcEma(candles, period) {
           if (candles.length < period) return [];
           const k = 2 / (period + 1);
@@ -1198,13 +1319,11 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
             return { time: d.time, value: ema };
           });
         }
-
         function addTracked(options) {
           const s = chart.addSeries(LineSeries, options);
           extraSeriesRef.current.push(s);
           return s;
         }
-
         [
           [9, "#a78bfa"],
           [55, "#f6c453"],
@@ -1216,18 +1335,17 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
             priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
+            priceScaleId: "right",
           });
           const emaData = calcEma(data.candles, period);
           if (emaData.length) s.setData(emaData);
         });
-
         chart.timeScale().fitContent();
         setError(null);
       } catch (err) {
         if (!cancelled) setError("Failed to load candles");
       }
     }
-
     fetchAndDraw();
     return () => {
       cancelled = true;
@@ -1243,298 +1361,58 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
   return <div ref={ref} style={{ width: "100%", height: "100%" }} />;
 }
 
-// ─── BriefingPanel ───────────────────────────────────────────────────────────
+// ─── PnlSparkline ────────────────────────────────────────────────────────────
 
-function BriefingPanel({ token }) {
-  const [briefing, setBriefing] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [session, setSession] = useState(null);
-  const [generatedAt, setGeneratedAt] = useState(null);
-  const [open, setOpen] = useState(false);
+function PnlSparkline({ decisions }) {
+  const points = useMemo(() => {
+    let running = 0;
+    return decisions
+      .slice()
+      .reverse()
+      .map((d) => {
+        running += Number(d.pnl) || 0;
+        return running;
+      });
+  }, [decisions]);
 
-  async function fetchBriefing() {
-    try {
-      setLoading(true);
-      const data = await apiFetch("/briefing", { method: "POST" });
-      setBriefing(data.briefing);
-      setSession(data.session);
-      setGeneratedAt(data.generatedAt);
-      setOpen(true);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  if (points.length < 2) return null;
+  const min = Math.min(...points, 0),
+    max = Math.max(...points, 0);
+  const range = max - min || 1;
+  const w = 120,
+    h = 32;
+  const toX = (i) => (i / (points.length - 1)) * w;
+  const toY = (v) => h - ((v - min) / range) * h;
+  const pathD = points
+    .map(
+      (v, i) =>
+        `${i === 0 ? "M" : "L"}${toX(i).toFixed(1)},${toY(v).toFixed(1)}`,
+    )
+    .join(" ");
+  const color = points[points.length - 1] >= 0 ? "#4ade80" : "#fb7185";
   return (
-    <div
-      style={{
-        borderRadius: 20,
-        border: `1px solid ${palette.border}`,
-        background: palette.panel,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "12px 16px",
-          borderBottom: open ? `1px solid ${palette.borderSoft}` : "none",
-        }}
-      >
-        <div>
-          <div style={{ fontWeight: 900, fontSize: 14 }}>
-            🌅 Pre-Session Briefing
-          </div>
-          <div style={{ fontSize: 11, color: palette.textDim, marginTop: 2 }}>
-            {generatedAt
-              ? `Generated ${new Date(generatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-              : "AI-powered session prep"}
-          </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {session && <Pill tone="gold">{session}</Pill>}
-          <button
-            style={styles.primaryButton}
-            onClick={fetchBriefing}
-            type="button"
-            disabled={loading}
-          >
-            {loading
-              ? "Generating…"
-              : briefing
-                ? "Refresh"
-                : "Generate Briefing"}
-          </button>
-          {briefing && (
-            <button
-              style={styles.button}
-              onClick={() => setOpen((p) => !p)}
-              type="button"
-            >
-              {open ? "Hide" : "Show"}
-            </button>
-          )}
-        </div>
-      </div>
-
-      {open && briefing && (
-        <div style={{ padding: 14, display: "grid", gap: 10 }}>
-          {/* Headline */}
-          <div
-            style={{
-              padding: "12px 14px",
-              borderRadius: 14,
-              background: "rgba(239,68,68,0.07)",
-              border: "1px solid rgba(239,68,68,0.2)",
-              fontSize: 15,
-              fontWeight: 900,
-              color: palette.text,
-            }}
-          >
-            {briefing.headline}
-          </div>
-
-          {/* Session context */}
-          <div
-            style={{
-              padding: "10px 13px",
-              borderRadius: 12,
-              background: palette.card,
-              border: `1px solid ${palette.border}`,
-              fontSize: 13,
-              color: palette.textSoft,
-              lineHeight: 1.55,
-            }}
-          >
-            {briefing.sessionContext}
-          </div>
-
-          {/* Watchlist */}
-          <div>
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 900,
-                letterSpacing: 2,
-                textTransform: "uppercase",
-                color: palette.textDim,
-                marginBottom: 8,
-              }}
-            >
-              Watchlist
-            </div>
-            <div style={{ display: "grid", gap: 6 }}>
-              {(briefing.topWatchlist || []).map((item, i) => {
-                const tone = directionTone(item.direction);
-                return (
-                  <div
-                    key={i}
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      padding: "10px 12px",
-                      borderRadius: 12,
-                      background: palette.card,
-                      border: `1px solid ${palette.border}`,
-                    }}
-                  >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          gap: 7,
-                          alignItems: "center",
-                          marginBottom: 4,
-                        }}
-                      >
-                        <span style={{ fontWeight: 900, fontSize: 13 }}>
-                          {item.pair}
-                        </span>
-                        <Pill tone={tone}>{item.direction}</Pill>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: palette.textSoft,
-                          lineHeight: 1.45,
-                        }}
-                      >
-                        {item.reason}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* DNA row */}
-          <div
-            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
-          >
-            <div
-              style={{
-                padding: "10px 13px",
-                borderRadius: 12,
-                background: "rgba(251,113,133,0.06)",
-                border: "1px solid rgba(251,113,133,0.2)",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 10,
-                  fontWeight: 900,
-                  letterSpacing: 1.5,
-                  textTransform: "uppercase",
-                  color: palette.short,
-                  marginBottom: 6,
-                }}
-              >
-                ⚠ Avoid Today
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  color: palette.textSoft,
-                  lineHeight: 1.5,
-                }}
-              >
-                {briefing.dnaWarning}
-              </div>
-            </div>
-            <div
-              style={{
-                padding: "10px 13px",
-                borderRadius: 12,
-                background: "rgba(74,222,128,0.06)",
-                border: "1px solid rgba(74,222,128,0.2)",
-              }}
-            >
-              <div
-                style={{
-                  fontSize: 10,
-                  fontWeight: 900,
-                  letterSpacing: 1.5,
-                  textTransform: "uppercase",
-                  color: palette.long,
-                  marginBottom: 6,
-                }}
-              >
-                ✓ Lean Into
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  color: palette.textSoft,
-                  lineHeight: 1.5,
-                }}
-              >
-                {briefing.dnaTip}
-              </div>
-            </div>
-          </div>
-
-          {/* Focus */}
-          <div
-            style={{
-              padding: "11px 14px",
-              borderRadius: 12,
-              background: "rgba(246,196,83,0.06)",
-              border: "1px solid rgba(246,196,83,0.2)",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 10,
-                fontWeight: 900,
-                letterSpacing: 1.5,
-                textTransform: "uppercase",
-                color: palette.gold,
-                marginBottom: 6,
-              }}
-            >
-              🎯 Session Focus
-            </div>
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 800,
-                color: palette.text,
-                lineHeight: 1.5,
-              }}
-            >
-              {briefing.focusForSession}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── FieldLabel ───────────────────────────────────────────────────────────────
-
-function FieldLabel({ label, children }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <div
-        style={{
-          fontSize: 10,
-          fontWeight: 800,
-          textTransform: "uppercase",
-          letterSpacing: 0.9,
-          color: palette.textDim,
-        }}
-      >
-        {label}
-      </div>
-      {children}
-    </div>
+    <svg width={w} height={h} style={{ overflow: "visible" }}>
+      <defs>
+        <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={`${pathD} L${w},${h} L0,${h} Z`} fill="url(#sparkGrad)" />
+      <path
+        d={pathD}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle
+        cx={toX(points.length - 1)}
+        cy={toY(points[points.length - 1])}
+        r="3"
+        fill={color}
+      />
+    </svg>
   );
 }
 
@@ -1547,9 +1425,11 @@ function StatsBar({ decisions }) {
         totalTrades: 0,
         winRate: "—",
         avgRR: "—",
-        totalPnl: "—",
+        totalPnl: null,
         winCount: 0,
         lossCount: 0,
+        streak: 0,
+        streakType: "",
       };
     const closed = decisions.filter(
       (d) =>
@@ -1561,13 +1441,29 @@ function StatsBar({ decisions }) {
       ? `${Math.round((wins / closed.length) * 100)}%`
       : "—";
     const rrVals = decisions
+      .filter(
+        (d) =>
+          d.exit &&
+          Number(d.exit) !== 0 &&
+          (d.outcome === "Win" ||
+            d.outcome === "Loss" ||
+            d.outcome === "Scratch"),
+      )
       .map((d) => Number(d.realizedRR))
-      .filter(Number.isFinite);
+      .filter((n) => Number.isFinite(n) && Math.abs(n) <= 20);
     const avgRR = rrVals.length
       ? `${(rrVals.reduce((a, b) => a + b, 0) / rrVals.length).toFixed(2)}R`
       : "—";
     const pnlVals = decisions.map((d) => Number(d.pnl)).filter(Number.isFinite);
     const totalPnl = pnlVals.length ? pnlVals.reduce((a, b) => a + b, 0) : null;
+    let streak = 0,
+      streakType = "";
+    for (const d of decisions) {
+      if (d.outcome !== "Win" && d.outcome !== "Loss") break;
+      if (!streakType) streakType = d.outcome;
+      if (d.outcome !== streakType) break;
+      streak++;
+    }
     return {
       totalTrades: decisions.length,
       winRate,
@@ -1575,19 +1471,28 @@ function StatsBar({ decisions }) {
       totalPnl,
       winCount: wins,
       lossCount: losses,
+      streak,
+      streakType,
     };
   }, [decisions]);
 
   const pnlPositive = stats.totalPnl != null && stats.totalPnl > 0;
   const pnlNegative = stats.totalPnl != null && stats.totalPnl < 0;
+  const streakColor =
+    stats.streakType === "Win"
+      ? palette.long
+      : stats.streakType === "Loss"
+        ? palette.short
+        : palette.textDim;
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(4,minmax(0,1fr))",
+        gridTemplateColumns: "repeat(5,minmax(0,1fr))",
         gap: 10,
       }}
+      className="llab-stats-bar"
     >
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Total Trades</div>
@@ -1606,23 +1511,169 @@ function StatsBar({ decisions }) {
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Avg Realized RR</div>
         <div style={styles.statValue}>{stats.avgRR}</div>
-        <div style={styles.statSub}>all logged entries</div>
+        <div style={styles.statSub}>closed with exit</div>
       </div>
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Total PnL</div>
         <div
           style={{
-            ...styles.statValue,
-            color: pnlPositive
-              ? palette.long
-              : pnlNegative
-                ? palette.short
-                : palette.text,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            justifyContent: "space-between",
           }}
         >
-          {stats.totalPnl != null ? money(stats.totalPnl) : "—"}
+          <div
+            style={{
+              ...styles.statValue,
+              color: pnlPositive
+                ? palette.long
+                : pnlNegative
+                  ? palette.short
+                  : palette.text,
+            }}
+          >
+            {stats.totalPnl != null ? money(stats.totalPnl) : "—"}
+          </div>
+          <PnlSparkline decisions={decisions} />
         </div>
         <div style={styles.statSub}>logged pnl only</div>
+      </div>
+      <div style={styles.statCard}>
+        <div style={styles.statLabel}>Current Streak</div>
+        <div style={{ ...styles.statValue, color: streakColor }}>
+          {stats.streak > 0
+            ? `${stats.streak}${stats.streakType === "Win" ? " 🔥" : " 📉"}`
+            : "—"}
+        </div>
+        <div style={styles.statSub}>
+          {stats.streakType || "no closed trades"}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── QuickClose ───────────────────────────────────────────────────────────────
+
+function QuickClose({ logId, onClose }) {
+  const [exit, setExit] = useState("");
+  const [pnl, setPnl] = useState("");
+  const [outcome, setOutcome] = useState("Win");
+  const [open, setOpen] = useState(false);
+
+  if (!open) {
+    return (
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        type="button"
+        style={{
+          ...cardButtonReset,
+          width: "auto",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "6px 12px",
+          borderRadius: 10,
+          border: "1px solid rgba(74,222,128,0.3)",
+          background: "rgba(74,222,128,0.07)",
+          color: palette.long,
+          fontSize: 12,
+          fontWeight: 800,
+          cursor: "pointer",
+        }}
+      >
+        ✓ Close Trade
+      </button>
+    );
+  }
+
+  return (
+    <div
+      onClick={(e) => e.stopPropagation()}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr auto auto",
+        gap: 8,
+        alignItems: "end",
+        padding: "10px 12px",
+        borderRadius: 12,
+        border: `1px solid ${palette.border}`,
+        background: "rgba(255,255,255,0.03)",
+      }}
+    >
+      <FieldLabel label="Exit Price">
+        <input
+          style={{ ...fieldStyle, fontSize: 13 }}
+          value={exit}
+          onChange={(e) => setExit(e.target.value)}
+          placeholder="e.g. 1638.50"
+        />
+      </FieldLabel>
+      <FieldLabel label="PnL ($)">
+        <input
+          style={{ ...fieldStyle, fontSize: 13 }}
+          value={pnl}
+          onChange={(e) => setPnl(e.target.value)}
+          placeholder="e.g. 142.50"
+        />
+      </FieldLabel>
+      <FieldLabel label="Outcome">
+        <select
+          style={{ ...fieldStyle, fontSize: 13 }}
+          value={outcome}
+          onChange={(e) => setOutcome(e.target.value)}
+        >
+          {["Win", "Loss", "Scratch"].map((v) => (
+            <option key={v}>{v}</option>
+          ))}
+        </select>
+      </FieldLabel>
+      <div style={{ display: "flex", gap: 6, paddingBottom: 1 }}>
+        <button
+          type="button"
+          onClick={() => {
+            if (exit || pnl)
+              onClose(
+                logId,
+                Number(exit) || null,
+                outcome,
+                Number(pnl) || null,
+              );
+            setOpen(false);
+          }}
+          style={{
+            border: "none",
+            borderRadius: 10,
+            padding: "9px 14px",
+            background: "linear-gradient(135deg,#22c55e,#16a34a)",
+            color: "#fff",
+            fontWeight: 900,
+            cursor: "pointer",
+            fontSize: 12,
+          }}
+        >
+          Save
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          style={{
+            border: `1px solid ${palette.border}`,
+            borderRadius: 10,
+            padding: "9px 12px",
+            background: "rgba(255,255,255,0.04)",
+            color: palette.textSoft,
+            fontWeight: 800,
+            cursor: "pointer",
+            fontSize: 12,
+          }}
+        >
+          ✕
+        </button>
       </div>
     </div>
   );
@@ -1936,14 +1987,16 @@ function apiFetch(path, options = {}, token = "") {
 export default function AppPreBeta() {
   const [events, setEvents] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState(null);
-  const [hasLwcCandles, setHasLwcCandles] = useState(false);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [logMode, setLogMode] = useState("event");
+  const [showAdvancedForm, setShowAdvancedForm] = useState(false);
   const [showInsights, setShowInsights] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(
     Boolean(getStoredToken()),
   );
+  const [hoveredWave, setHoveredWave] = useState(null);
+  const [hoveredLogId, setHoveredLogId] = useState(null);
   const [currentUser, setCurrentUser] = useState({
     email: "",
     billingPlan: "starter",
@@ -1953,7 +2006,6 @@ export default function AppPreBeta() {
   });
   const [featureFlags, setFeatureFlags] = useState(DEFAULT_FEATURE_FLAGS);
   const [chartReloadKey, setChartReloadKey] = useState(0);
-  const [chartEvent, setChartEvent] = useState(null);
   const chartTimeoutRef = useRef(null);
   const isMountedRef = useRef(true);
 
@@ -2009,6 +2061,22 @@ export default function AppPreBeta() {
   const [aiRemaining, setAiRemaining] = useState(null);
   const [aiReviewLoading, setAiReviewLoading] = useState(false);
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
+  const [registerForm, setRegisterForm] = useState({
+    email: "",
+    password: "",
+    confirm: "",
+  });
+  const [authTab, setAuthTab] = useState(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("register")
+        ? "register"
+        : "login";
+    } catch {
+      return "login";
+    }
+  });
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const [propAccount, setPropAccount] = useState({
     presetId: "ftmo_like",
     accountSize: 50000,
@@ -2125,12 +2193,6 @@ export default function AppPreBeta() {
   }, []);
 
   useEffect(() => {
-    if (selectedEvent?.chartCandles?.length) {
-      setHasLwcCandles(true);
-    }
-  }, [selectedEvent]);
-
-  useEffect(() => {
     if (selectedEvent && logMode === "event") {
       setDecisionForm((prev) => ({
         ...prev,
@@ -2179,15 +2241,15 @@ export default function AppPreBeta() {
     return map[timeframe] || "3";
   }
 
-  const chartBaseEvent = chartEvent || selectedEvent;
+  // Use selectedEvent directly — no stale chartEvent state (BUG FIX)
   const chartPair =
     logMode === "manual"
       ? decisionForm.pair || "BTC/USDT"
-      : chartBaseEvent?.pair || "BTC/USDT";
+      : selectedEvent?.pair || "BTC/USDT";
   const activeTimeframe =
     logMode === "manual"
       ? decisionForm.timeframe || "3m"
-      : chartBaseEvent?.timeframe || decisionForm.timeframe || "3m";
+      : selectedEvent?.timeframe || decisionForm.timeframe || "3m";
   const chartSymbol = getTradingViewSymbol(chartPair);
   const chartInterval = getTradingViewInterval(activeTimeframe);
   const basePair = chartPair.replace(":USDT", "").replace("/", "");
@@ -2201,6 +2263,7 @@ export default function AppPreBeta() {
     tradingView: `https://www.tradingview.com/chart/?symbol=BINANCE:${basePair}`,
   };
 
+  // chartSrc memo now depends on chartSymbol + chartInterval so it rebuilds on pair change (BUG FIX)
   const chartSrc = useMemo(
     () =>
       "https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart" +
@@ -2312,16 +2375,6 @@ export default function AppPreBeta() {
     decisionForm.stop,
   ]);
 
-  const stableChartEvent = useMemo(
-    () => selectedEvent,
-    [
-      selectedEvent?.id,
-      selectedEvent?.pair,
-      selectedEvent?.timestampUtc,
-      selectedEvent?.chartCandles?.length,
-    ],
-  );
-
   const selectedEventRR = useMemo(
     () =>
       calcPlannedRR(
@@ -2349,17 +2402,24 @@ export default function AppPreBeta() {
       decisionForm.exit,
     ],
   );
+  // BUG FIX: use selectedEvent RR values as fallback when form values don't calc cleanly
   const decisionPlannedRR = useMemo(
     () =>
       calcPlannedRR(
-        decisionForm.entry,
-        decisionForm.stop,
-        decisionForm.tp1,
-        decisionForm.tp2,
-        null,
-        null,
+        Number(decisionForm.entry) || null,
+        Number(decisionForm.stop) || null,
+        Number(decisionForm.tp1) || null,
+        Number(decisionForm.tp2) || null,
+        selectedEvent?.rr1,
+        selectedEvent?.rr2,
       ),
-    [decisionForm.entry, decisionForm.stop, decisionForm.tp1, decisionForm.tp2],
+    [
+      decisionForm.entry,
+      decisionForm.stop,
+      decisionForm.tp1,
+      decisionForm.tp2,
+      selectedEvent,
+    ],
   );
   const decisionRiskAmount = useMemo(
     () => calcRiskAmount(decisionForm.entry, decisionForm.stop),
@@ -2400,11 +2460,52 @@ export default function AppPreBeta() {
     reader.readAsDataURL(file);
   }
 
+  // BUG FIX: selectWaveHead bumps chartReloadKey to force iframe remount with correct symbol
   function selectWaveHead(wave) {
     const head = wave?.events?.[0];
     if (head) {
       setSelectedEvent(head);
-      setChartEvent(head);
+      setChartReloadKey((k) => k + 1);
+    }
+  }
+
+  async function registerUser() {
+    if (!registerForm.email || !registerForm.password) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+    if (registerForm.password !== registerForm.confirm) {
+      setAuthError("Passwords don't match.");
+      return;
+    }
+    if (registerForm.password.length < 8) {
+      setAuthError("Password must be at least 8 characters.");
+      return;
+    }
+    try {
+      setAuthLoading(true);
+      setAuthError("");
+      const res = await fetch(`${API_BASE}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: registerForm.email.trim(),
+          password: registerForm.password,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Registration failed");
+      try {
+        localStorage.setItem("token", data.token || "");
+        localStorage.setItem("user", JSON.stringify(data.user || {}));
+      } catch {}
+      setIsAuthenticated(true);
+      setActiveTab("dashboard");
+      toast("Welcome to Liquidity Lab!", "success");
+    } catch (err) {
+      setAuthError(err.message || "Registration failed");
+    } finally {
+      setAuthLoading(false);
     }
   }
 
@@ -2448,9 +2549,9 @@ export default function AppPreBeta() {
       } catch {}
       setIsAuthenticated(true);
       setActiveTab("dashboard");
-      toast("Logged in", "success");
+      toast("Welcome back!", "success");
     } catch (err) {
-      toast(err.message || "Login failed", "warn");
+      setAuthError(err.message || "Login failed");
     }
   }
 
@@ -2716,40 +2817,81 @@ export default function AppPreBeta() {
         : "Decision logged",
       "success",
     );
+
+    // Reset volatile fields, keep context
+    setDecisionForm((prev) => ({
+      ...prev,
+      entry: logMode === "event" ? prev.entry : "",
+      stop: logMode === "event" ? prev.stop : "",
+      tp1: logMode === "event" ? prev.tp1 : "",
+      tp2: logMode === "event" ? prev.tp2 : "",
+      exit: "",
+      pnl: "",
+      notes: "",
+      screenshot: "",
+      screenshotBase64: "",
+      screenshotMimeType: "",
+      outcome: "Open",
+      ruleBreak: "None",
+      disciplineScore: "8",
+      setupQuality: "8",
+      emotionalPressure: "3",
+      confidenceSelf: "7",
+    }));
+    setAiReviewResult(null);
   }
 
   const displayDecisions = showInsights
     ? loggedDecisions
     : loggedDecisions.slice(0, 5);
 
-  // ─── Login screen ───────────────────────────────────────────────────────────
-
   if (!isAuthenticated) {
     return (
-      <div style={styles.app}>
+      <div
+        style={{
+          ...styles.app,
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          padding: 24,
+        }}
+      >
+        {/* Background glow */}
         <div
           style={{
-            ...styles.shell,
-            minHeight: "100vh",
-            display: "grid",
-            placeItems: "center",
+            position: "fixed",
+            inset: 0,
+            background:
+              "radial-gradient(ellipse 60% 40% at 50% 0%, rgba(239,68,68,0.12), transparent)",
+            pointerEvents: "none",
           }}
+        />
+
+        <div
+          style={{ width: "min(420px,100%)", position: "relative", zIndex: 1 }}
         >
-          <div
-            style={{
-              width: "min(400px,100%)",
-              border: `1px solid ${palette.border}`,
-              borderRadius: 24,
-              background: palette.panel,
-              padding: 24,
-              display: "grid",
-              gap: 16,
-              boxShadow: "0 16px 42px rgba(0,0,0,0.4)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={styles.brandIcon}>ROS</div>
-              <div>
+          {/* Brand */}
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 12,
+              }}
+            >
+              <div
+                style={{
+                  ...styles.brandIcon,
+                  width: 44,
+                  height: 44,
+                  borderRadius: 14,
+                  fontSize: 15,
+                }}
+              >
+                ROS
+              </div>
+              <div style={{ textAlign: "left" }}>
                 <div
                   style={{
                     fontSize: 10,
@@ -2760,48 +2902,308 @@ export default function AppPreBeta() {
                 >
                   Red October Systems
                 </div>
-                <div style={{ fontSize: 22, fontWeight: 900, marginTop: 2 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, lineHeight: 1.1 }}>
                   Liquidity Lab
                 </div>
               </div>
             </div>
             <div style={{ fontSize: 13, color: palette.textSoft }}>
-              Sign in to access journaling, AI review, and saved logs.
+              {authTab === "login"
+                ? "Sign in to your account"
+                : "Create your free account — no card required"}
             </div>
-            <div style={{ display: "grid", gap: 10 }}>
-              <input
-                style={fieldStyle}
-                placeholder="Email"
-                value={loginForm.email}
-                onChange={(e) =>
-                  setLoginForm((prev) => ({ ...prev, email: e.target.value }))
-                }
-              />
-              <input
-                style={fieldStyle}
-                placeholder="Password"
-                type="password"
-                value={loginForm.password}
-                onChange={(e) =>
-                  setLoginForm((prev) => ({
-                    ...prev,
-                    password: e.target.value,
-                  }))
-                }
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") loginUser();
-                }}
-              />
-            </div>
-            <button
-              style={styles.primaryButton}
-              type="button"
-              onClick={loginUser}
+          </div>
+
+          {/* Card */}
+          <div
+            style={{
+              border: `1px solid ${palette.border}`,
+              borderRadius: 22,
+              background: palette.panel,
+              overflow: "hidden",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.5)",
+            }}
+          >
+            {/* Tabs */}
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                borderBottom: `1px solid ${palette.border}`,
+              }}
             >
-              Sign In
-            </button>
+              {["login", "register"].map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => {
+                    setAuthTab(tab);
+                    setAuthError("");
+                  }}
+                  style={{
+                    appearance: "none",
+                    border: "none",
+                    padding: "14px",
+                    background: "none",
+                    color: authTab === tab ? palette.text : palette.textDim,
+                    fontWeight: authTab === tab ? 800 : 600,
+                    fontSize: 13,
+                    cursor: "pointer",
+                    borderBottom:
+                      authTab === tab
+                        ? `2px solid ${palette.accent}`
+                        : "2px solid transparent",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {tab === "login" ? "Sign In" : "Create Account"}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ padding: 24, display: "grid", gap: 14 }}>
+              {authError && (
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 12,
+                    background: "rgba(239,68,68,0.1)",
+                    border: "1px solid rgba(239,68,68,0.25)",
+                    color: "#f87171",
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  {authError}
+                </div>
+              )}
+
+              {authTab === "login" ? (
+                <>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <FieldLabel label="Email">
+                      <input
+                        style={fieldStyle}
+                        placeholder="you@example.com"
+                        type="email"
+                        value={loginForm.email}
+                        onChange={(e) => {
+                          setLoginForm((prev) => ({
+                            ...prev,
+                            email: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                      />
+                    </FieldLabel>
+                    <FieldLabel label="Password">
+                      <input
+                        style={fieldStyle}
+                        placeholder="Your password"
+                        type="password"
+                        value={loginForm.password}
+                        onChange={(e) => {
+                          setLoginForm((prev) => ({
+                            ...prev,
+                            password: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") loginUser();
+                        }}
+                      />
+                    </FieldLabel>
+                  </div>
+                  <button
+                    style={{
+                      ...styles.primaryButton,
+                      opacity: authLoading ? 0.7 : 1,
+                    }}
+                    type="button"
+                    onClick={async () => {
+                      setAuthLoading(true);
+                      setAuthError("");
+                      try {
+                        await loginUser();
+                      } catch (e) {
+                        setAuthError(e.message);
+                      } finally {
+                        setAuthLoading(false);
+                      }
+                    }}
+                  >
+                    {authLoading ? "Signing in…" : "Sign In →"}
+                  </button>
+                  <div
+                    style={{
+                      textAlign: "center",
+                      fontSize: 12,
+                      color: palette.textDim,
+                    }}
+                  >
+                    No account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthTab("register");
+                        setAuthError("");
+                      }}
+                      style={{
+                        appearance: "none",
+                        border: "none",
+                        background: "none",
+                        color: palette.accent,
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}
+                    >
+                      Create one free
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <FieldLabel label="Email">
+                      <input
+                        style={fieldStyle}
+                        placeholder="you@example.com"
+                        type="email"
+                        value={registerForm.email}
+                        onChange={(e) => {
+                          setRegisterForm((prev) => ({
+                            ...prev,
+                            email: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                      />
+                    </FieldLabel>
+                    <FieldLabel label="Password">
+                      <input
+                        style={fieldStyle}
+                        placeholder="At least 8 characters"
+                        type="password"
+                        value={registerForm.password}
+                        onChange={(e) => {
+                          setRegisterForm((prev) => ({
+                            ...prev,
+                            password: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                      />
+                    </FieldLabel>
+                    <FieldLabel label="Confirm Password">
+                      <input
+                        style={fieldStyle}
+                        placeholder="Repeat password"
+                        type="password"
+                        value={registerForm.confirm}
+                        onChange={(e) => {
+                          setRegisterForm((prev) => ({
+                            ...prev,
+                            confirm: e.target.value,
+                          }));
+                          setAuthError("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") registerUser();
+                        }}
+                      />
+                    </FieldLabel>
+                  </div>
+                  <button
+                    style={{
+                      ...styles.primaryButton,
+                      background: "linear-gradient(135deg,#22c55e,#16a34a)",
+                      boxShadow: "0 10px 24px rgba(34,197,94,0.25)",
+                      opacity: authLoading ? 0.7 : 1,
+                    }}
+                    type="button"
+                    onClick={registerUser}
+                  >
+                    {authLoading
+                      ? "Creating account…"
+                      : "Create Free Account →"}
+                  </button>
+                  <div
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: 12,
+                      background: "rgba(74,222,128,0.06)",
+                      border: "1px solid rgba(74,222,128,0.15)",
+                      fontSize: 12,
+                      color: palette.textSoft,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    ✓ Free forever · No card required · Live radar + journal
+                    included
+                  </div>
+                  <div
+                    style={{
+                      textAlign: "center",
+                      fontSize: 12,
+                      color: palette.textDim,
+                    }}
+                  >
+                    Already have an account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAuthTab("login");
+                        setAuthError("");
+                      }}
+                      style={{
+                        appearance: "none",
+                        border: "none",
+                        background: "none",
+                        color: palette.accent,
+                        cursor: "pointer",
+                        fontSize: 12,
+                        fontWeight: 700,
+                      }}
+                    >
+                      Sign in
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div
+            style={{
+              textAlign: "center",
+              marginTop: 20,
+              fontSize: 11,
+              color: palette.textDim,
+            }}
+          >
+            By creating an account you agree to our terms of service.{" "}
+            <a
+              href="https://www.redoctobersystems.com"
+              style={{ color: palette.textDim }}
+            >
+              ← Back to site
+            </a>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (activeTab === "vault") {
+    return (
+      <div style={styles.app}>
+        <MembersVault
+          onBack={() => setActiveTab("dashboard")}
+          currentUser={currentUser}
+          featureFlags={featureFlags}
+        />
       </div>
     );
   }
@@ -2809,114 +3211,316 @@ export default function AppPreBeta() {
   if (activeTab === "billing") {
     return (
       <div style={styles.app}>
-        <div style={styles.shell}>
-          <BillingPage token={getStoredToken()} compact={false} />
-        </div>
+        <BillingPage
+          token={getStoredToken()}
+          compact={false}
+          onBack={() => setActiveTab("dashboard")}
+        />
       </div>
     );
   }
 
-  // ─── Main dashboard ─────────────────────────────────────────────────────────
-
   return (
     <div style={styles.app}>
-      <div style={styles.shell}>
-        {/* TOP BAR */}
-        <div style={styles.topbar}>
-          <div style={styles.topbarRow}>
-            <div style={styles.brandWrap}>
-              <div style={styles.brandIcon}>ROS</div>
-              <div>
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: palette.textDim,
-                    letterSpacing: 3,
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Red October Systems
-                </div>
-                <div style={{ fontSize: 24, fontWeight: 900 }}>
-                  Liquidity Lab
-                </div>
-              </div>
-            </div>
+      <MobileStyles />
+      <div style={styles.shell} className="llab-shell">
+        {/* TOP BAR — slim sticky nav matching vault style */}
+        <div
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 100,
+            borderBottom: `1px solid ${palette.border}`,
+            background: "rgba(3,6,11,0.92)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            display: "flex",
+            alignItems: "center",
+            height: 52,
+            gap: 0,
+            margin: "-14px -16px 0",
+            padding: "0 16px",
+          }}
+        >
+          {/* Brand */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              paddingRight: 20,
+              borderRight: `1px solid ${palette.border}`,
+              height: "100%",
+              flexShrink: 0,
+            }}
+          >
             <div
               style={{
-                display: "flex",
-                gap: 8,
-                flexWrap: "wrap",
-                alignItems: "center",
+                ...styles.brandIcon,
+                width: 32,
+                height: 32,
+                borderRadius: 10,
+                fontSize: 12,
               }}
             >
-              <Pill tone={propStatus.tone}>{propStatus.status}</Pill>
-              <Pill tone="neutral">
-                {(currentUser?.billingPlan || "starter").toUpperCase()}
-              </Pill>
-              {aiRemaining != null && (
-                <Pill tone="gold">{aiRemaining} AI left</Pill>
-              )}
-              <button
-                style={styles.button}
-                onClick={() => setActiveTab("billing")}
-                type="button"
-              >
-                Billing
-              </button>
-              <button
-                style={styles.button}
-                onClick={() => window.location.reload()}
-                type="button"
-              >
-                Refresh
-              </button>
-              <button
-                style={{
-                  ...styles.button,
-                  border: "1px solid rgba(239,68,68,0.35)",
-                  color: "#f87171",
-                }}
-                onClick={reportIssue}
-                type="button"
-              >
-                Report Issue
-              </button>
-              <button
-                style={styles.button}
-                onClick={() => {
-                  localStorage.removeItem("token");
-                  localStorage.removeItem("liquidity_lab_token");
-                  setIsAuthenticated(false);
-                  setCurrentUser(null);
-                  setActiveTab("login");
-                }}
-              >
-                Logout
-              </button>
+              ROS
             </div>
+            <div>
+              <div
+                style={{
+                  fontSize: 9,
+                  color: palette.textDim,
+                  letterSpacing: 2.5,
+                  textTransform: "uppercase",
+                }}
+              >
+                Red October Systems
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 900, lineHeight: 1.1 }}>
+                Liquidity Lab
+              </div>
+            </div>
+          </div>
+
+          {/* Status pills */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "0 16px",
+              borderRight: `1px solid ${palette.border}`,
+              height: "100%",
+              flexShrink: 0,
+            }}
+          >
+            <Pill tone={propStatus.tone}>{propStatus.status}</Pill>
+            <Pill tone="neutral">
+              {(currentUser?.billingPlan || "starter").toUpperCase()}
+            </Pill>
+            {aiRemaining != null && <Pill tone="gold">{aiRemaining} AI</Pill>}
+          </div>
+
+          {/* Nav links */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              flex: 1,
+              height: "100%",
+              padding: "0 8px",
+            }}
+          >
+            {[
+              {
+                label: "Dashboard",
+                action: () => setActiveTab("dashboard"),
+                active: activeTab === "dashboard",
+              },
+              {
+                label: "Members Vault",
+                action: () => setActiveTab("vault"),
+                active: activeTab === "vault",
+                gold: true,
+              },
+              {
+                label: "Billing",
+                action: () => setActiveTab("billing"),
+                active: activeTab === "billing",
+              },
+            ].map((item) => (
+              <button
+                key={item.label}
+                onClick={item.action}
+                type="button"
+                style={{
+                  appearance: "none",
+                  border: "none",
+                  background: "none",
+                  color: item.gold
+                    ? "#f6c453"
+                    : item.active
+                      ? palette.text
+                      : palette.textDim,
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: item.active ? 800 : 600,
+                  padding: "0 14px",
+                  height: "100%",
+                  borderBottom: item.active
+                    ? `2px solid ${item.gold ? "#f6c453" : palette.accent}`
+                    : "2px solid transparent",
+                  transition: "all 0.15s ease",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Right actions */}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              paddingLeft: 12,
+              borderLeft: `1px solid ${palette.border}`,
+              height: "100%",
+              flexShrink: 0,
+            }}
+          >
+            <button
+              onClick={() => window.location.reload()}
+              type="button"
+              style={{
+                appearance: "none",
+                border: "none",
+                background: "none",
+                color: palette.textDim,
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "0 10px",
+                height: "100%",
+                transition: "color 0.15s",
+              }}
+            >
+              Refresh
+            </button>
+            <button
+              onClick={reportIssue}
+              type="button"
+              style={{
+                appearance: "none",
+                border: "none",
+                background: "none",
+                color: "#f87171",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "0 10px",
+                height: "100%",
+                transition: "color 0.15s",
+              }}
+            >
+              Report Issue
+            </button>
+            <button
+              onClick={() => {
+                localStorage.removeItem("token");
+                localStorage.removeItem("liquidity_lab_token");
+                setIsAuthenticated(false);
+                setCurrentUser(null);
+                setActiveTab("login");
+              }}
+              type="button"
+              style={{
+                appearance: "none",
+                border: "none",
+                background: "none",
+                color: palette.textDim,
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: 700,
+                padding: "0 10px",
+                height: "100%",
+                transition: "color 0.15s",
+              }}
+            >
+              Logout
+            </button>
           </div>
         </div>
 
-        {/* TICKER */}
+        {/* TICKER — bumps chartReloadKey on select (BUG FIX) */}
         <SmartTicker
           items={tickerItems}
           onSelect={(item) => {
             if (item?._wave) selectWaveHead(item._wave);
-            else setSelectedEvent(item);
+            else {
+              setSelectedEvent(item);
+              setChartReloadKey((k) => k + 1);
+            }
           }}
         />
 
-        {/* SESSION CLOCKS */}
         <SessionClockWidget />
-
-        <BriefingPanel token={getStoredToken()} />
-
-        {/* STATS BAR */}
         <StatsBar decisions={loggedDecisions} />
 
+        {/* TRADER DNA™ TEASER — upsell for non-pro or pro hook to vault */}
+        <div
+          onClick={() => setActiveTab("vault")}
+          style={{
+            borderRadius: 16,
+            border: "1px solid rgba(246,196,83,0.25)",
+            background:
+              "linear-gradient(135deg,rgba(246,196,83,0.06),rgba(5,8,14,0.95))",
+            padding: "12px 18px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 12,
+            cursor: "pointer",
+            transition: "all 0.2s ease",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <span style={{ fontSize: 22 }}>🧬</span>
+            <div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 900,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                }}
+              >
+                Trader DNA
+                <sup style={{ fontSize: 9, color: "#f6c453", fontWeight: 900 }}>
+                  ™
+                </sup>
+                <span
+                  style={{
+                    fontSize: 10,
+                    padding: "2px 7px",
+                    borderRadius: 999,
+                    background: "rgba(96,165,250,0.12)",
+                    border: "1px solid rgba(96,165,250,0.24)",
+                    color: "#60a5fa",
+                    fontWeight: 800,
+                  }}
+                >
+                  Claude-Reviewed™
+                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "rgba(244,247,251,0.46)",
+                  marginTop: 2,
+                }}
+              >
+                AI builds your personal trading profile from every logged trade
+              </div>
+            </div>
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: "#f6c453",
+              fontWeight: 800,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Generate Profile →
+          </div>
+        </div>
+
         {/* MAIN GRID */}
-        <div style={styles.mainGrid}>
+        <div style={styles.mainGrid} className="llab-main-grid">
           {/* LEFT: RADAR */}
           <div
             style={{
@@ -2927,6 +3531,7 @@ export default function AppPreBeta() {
               flexDirection: "column",
               overflow: "hidden",
             }}
+            className="llab-radar-panel"
           >
             <div style={styles.panelHeader}>
               <div>
@@ -2953,14 +3558,40 @@ export default function AppPreBeta() {
                       : state === "AGING"
                         ? palette.gold
                         : palette.short;
+                  const isSelected =
+                    selectedEvent &&
+                    wave.events?.some(
+                      (e) =>
+                        e.pair === selectedEvent.pair &&
+                        e.directionBias === selectedEvent.directionBias,
+                    );
                   return (
                     <div
                       key={wave.key}
                       onClick={() => selectWaveHead(wave)}
+                      onMouseEnter={() => setHoveredWave(wave.key)}
+                      onMouseLeave={() => setHoveredWave(null)}
                       style={{
                         ...styles.waveCard,
                         borderLeft: `3px solid ${tone === "long" ? palette.long : palette.short}`,
-                        "&:hover": { background: "rgba(255,255,255,0.03)" },
+                        background: isSelected
+                          ? tone === "long"
+                            ? "rgba(74,222,128,0.1)"
+                            : "rgba(251,113,133,0.1)"
+                          : hoveredWave === wave.key
+                            ? tone === "long"
+                              ? "rgba(74,222,128,0.06)"
+                              : "rgba(251,113,133,0.06)"
+                            : "rgba(10,14,22,0.92)",
+                        transform:
+                          hoveredWave === wave.key
+                            ? "translateX(2px)"
+                            : "translateX(0)",
+                        boxShadow: isSelected
+                          ? tone === "long"
+                            ? "inset 0 0 0 1px rgba(74,222,128,0.3)"
+                            : "inset 0 0 0 1px rgba(251,113,133,0.3)"
+                          : "none",
                       }}
                     >
                       <div
@@ -3073,9 +3704,28 @@ export default function AppPreBeta() {
                 })
               ) : (
                 <div
-                  style={{ color: palette.textSoft, fontSize: 13, padding: 8 }}
+                  style={{
+                    display: "grid",
+                    placeItems: "center",
+                    height: 120,
+                    gap: 8,
+                    opacity: 0.5,
+                  }}
                 >
-                  No live events yet.
+                  <div style={{ fontSize: 24 }}>📡</div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: palette.textSoft,
+                      textAlign: "center",
+                    }}
+                  >
+                    No live signals
+                    <br />
+                    <span style={{ fontSize: 11, color: palette.textDim }}>
+                      Bot scanning markets…
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
@@ -3088,56 +3738,244 @@ export default function AppPreBeta() {
               flexDirection: "column",
               gap: 10,
               minHeight: 0,
-              alignSelf: "start",
+              alignSelf: "stretch",
             }}
           >
-            {/* Chart */}
             <div
               style={{
                 ...styles.chartFrame,
-                height: 440,
-                minHeight: 440,
-                flexShrink: 0,
+                flex: 1,
+                minHeight: 380,
                 position: "relative",
               }}
+              className="llab-chart-frame"
             >
-              <LightweightExecutionChart
-                pair={chartPair}
-                timeframe={activeTimeframe}
-                entry={selectedEvent?.entry}
-                stop={selectedEvent?.stop}
-                tp1={selectedEvent?.tp1}
-                tp2={selectedEvent?.tp2}
-              />
-            </div>
-            {/* Exchange bar */}
-            <div style={styles.exchangeBar}>
-              <span style={styles.exchangeLabel}>Open on</span>
-              {[
-                ["BLOFIN", exchangeLinks.blofin],
-                ["BINANCE", exchangeLinks.binance],
-                ["BYBIT", exchangeLinks.bybit],
-                ["OKX", exchangeLinks.okx],
-                ["TV", exchangeLinks.tradingView],
-              ].map(([label, href]) => (
-                <a
-                  key={label}
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={styles.smallButton}
+              {selectedEvent ? (
+                <LightweightExecutionChart
+                  pair={selectedEvent?.pair || chartPair}
+                  timeframe={selectedEvent?.timeframe || activeTimeframe}
+                  entry={selectedEvent?.entry}
+                  stop={selectedEvent?.stop}
+                  tp1={selectedEvent?.tp1}
+                  tp2={selectedEvent?.tp2}
+                />
+              ) : (
+                <div
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    display: "grid",
+                    placeItems: "center",
+                    background: "rgba(5,8,14,0.95)",
+                  }}
                 >
-                  {label}
-                </a>
-              ))}
+                  <div
+                    style={{ textAlign: "center", display: "grid", gap: 12 }}
+                  >
+                    <div style={{ fontSize: 32, opacity: 0.3 }}>📡</div>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: palette.textDim,
+                        fontWeight: 700,
+                      }}
+                    >
+                      No signal selected
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: palette.textDim,
+                        opacity: 0.6,
+                      }}
+                    >
+                      Click a radar card to load the chart
+                    </div>
+                  </div>
+                </div>
+              )}
+              {/* ── Exchange + Prop Firm Quick Links ── */}
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  padding: "8px 10px",
+                  background:
+                    "linear-gradient(0deg,rgba(3,6,11,0.92) 0%,transparent 100%)",
+                  zIndex: 5,
+                  display: "grid",
+                  gap: 5,
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: "rgba(255,255,255,0.3)",
+                      fontWeight: 800,
+                      letterSpacing: 0.5,
+                      textTransform: "uppercase",
+                      marginRight: 2,
+                    }}
+                  >
+                    Trade on
+                  </span>
+                  {[
+                    {
+                      label: "Blofin",
+                      href: `https://blofin.com/futures/${dashPair}?ref=redoctober`,
+                      color: "#3b82f6",
+                      bg: "rgba(59,130,246,0.12)",
+                    },
+                    {
+                      label: "Bybit",
+                      href: `https://www.bybit.com/trade/usdt/${basePair}?affiliate_id=redoctober`,
+                      color: "#f59e0b",
+                      bg: "rgba(245,158,11,0.12)",
+                    },
+                    {
+                      label: "Binance",
+                      href: `https://www.binance.com/en/futures/${basePair}?ref=redoctober`,
+                      color: "#f0b90b",
+                      bg: "rgba(240,185,11,0.12)",
+                    },
+                    {
+                      label: "OKX",
+                      href: `https://www.okx.com/trade-swap/${dashPair.toLowerCase()}-swap?channelid=redoctober`,
+                      color: "#60a5fa",
+                      bg: "rgba(96,165,250,0.1)",
+                    },
+                    {
+                      label: "Kraken",
+                      href: "https://www.kraken.com/sign-up?referral=redoctober",
+                      color: "#7c3aed",
+                      bg: "rgba(124,58,237,0.12)",
+                    },
+                    {
+                      label: "TradingView",
+                      href: `https://www.tradingview.com/chart/?symbol=BINANCE:${basePair}&offer_id=10&aff_id=redoctober`,
+                      color: "#2962ff",
+                      bg: "rgba(41,98,255,0.1)",
+                    },
+                  ].map(({ label, href, color, bg }) => (
+                    <a
+                      key={label}
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "4px 10px",
+                        borderRadius: 8,
+                        background: bg,
+                        border: `1px solid ${color}33`,
+                        color,
+                        fontSize: 11,
+                        fontWeight: 800,
+                        textDecoration: "none",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {label}
+                    </a>
+                  ))}
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: "rgba(255,255,255,0.3)",
+                      fontWeight: 800,
+                      letterSpacing: 0.5,
+                      textTransform: "uppercase",
+                      marginRight: 2,
+                    }}
+                  >
+                    Prop firms
+                  </span>
+                  {[
+                    {
+                      label: "FTMO",
+                      href: "https://ftmo.com/?affiliates=redoctober",
+                      color: "#ef4444",
+                      bg: "rgba(239,68,68,0.1)",
+                    },
+                    {
+                      label: "MyFundedFX",
+                      href: "https://myfundedfx.tech/registration/?ref=redoctober",
+                      color: "#10b981",
+                      bg: "rgba(16,185,129,0.1)",
+                    },
+                    {
+                      label: "The5ers",
+                      href: "https://the5ers.com/?utm_source=redoctober",
+                      color: "#8b5cf6",
+                      bg: "rgba(139,92,246,0.1)",
+                    },
+                    {
+                      label: "Topstep",
+                      href: "https://www.topstep.com/?ref=redoctober",
+                      color: "#f97316",
+                      bg: "rgba(249,115,22,0.1)",
+                    },
+                    {
+                      label: "Apex",
+                      href: "https://apextraderfunding.com/?ref=redoctober",
+                      color: "#06b6d4",
+                      bg: "rgba(6,182,212,0.1)",
+                    },
+                  ].map(({ label, href, color, bg }) => (
+                    <a
+                      key={label}
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        padding: "4px 10px",
+                        borderRadius: 8,
+                        background: bg,
+                        border: `1px solid ${color}33`,
+                        color,
+                        fontSize: 11,
+                        fontWeight: 800,
+                        textDecoration: "none",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {label}
+                    </a>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            {/* Signal insight bar */}
-            <SignalInsightBar
-              event={selectedEvent}
-              rr={selectedEventRR}
-              risk={decisionRiskAmount}
-            />
+            {/* Signal bar — only shows when event selected */}
+            {selectedEvent && (
+              <SignalInsightBar
+                event={selectedEvent}
+                rr={selectedEventRR}
+                risk={decisionRiskAmount}
+              />
+            )}
           </div>
 
           {/* RIGHT: Decision Context */}
@@ -3149,6 +3987,7 @@ export default function AppPreBeta() {
               flexDirection: "column",
               overflow: "hidden",
             }}
+            className="llab-right-panel"
           >
             <div style={styles.panelHeader}>
               <div>
@@ -3167,133 +4006,322 @@ export default function AppPreBeta() {
               style={{
                 flex: 1,
                 overflowY: "auto",
-                padding: "12px 12px 14px",
+                padding: "10px 10px 12px",
                 display: "grid",
-                gap: 10,
+                gap: 8,
                 alignContent: "start",
               }}
             >
-              {/* Pair + Confidence */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                }}
-              >
-                <MiniBox label="Pair" value={selectedEvent?.pair || "—"} />
-                <MiniBox
-                  label="Confidence"
-                  value={`${Math.round((selectedEvent?.botConfidence || 0) * 100)}%`}
-                  subtext={selectedEvent?.sweepType || "—"}
-                />
-              </div>
-
-              {/* Confidence bar */}
-              <div
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 14,
-                  background: "rgba(255,255,255,0.025)",
-                  border: `1px solid ${palette.borderSoft}`,
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    fontSize: 10,
-                    color: palette.textDim,
-                    marginBottom: 7,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.8,
-                    fontWeight: 800,
-                  }}
-                >
-                  <span>Setup Strength</span>
-                  <span>
-                    {Math.round((selectedEvent?.botConfidence || 0) * 100)}%
-                  </span>
-                </div>
-                <div
-                  style={{
-                    height: 6,
-                    borderRadius: 999,
-                    background: "rgba(255,255,255,0.08)",
-                    overflow: "hidden",
-                  }}
-                >
+              {selectedEvent ? (
+                <>
                   <div
                     style={{
-                      width: `${Math.max(4, Math.round((selectedEvent?.botConfidence || 0) * 100))}%`,
-                      height: "100%",
-                      borderRadius: 999,
-                      background:
-                        (selectedEvent?.botConfidence || 0) >= 0.7
-                          ? "linear-gradient(90deg,#22c55e,#86efac)"
-                          : (selectedEvent?.botConfidence || 0) >= 0.45
-                            ? "linear-gradient(90deg,#f59e0b,#fde68a)"
-                            : "linear-gradient(90deg,#fb7185,#fecdd3)",
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
                     }}
-                  />
+                  >
+                    <MiniBox label="Pair" value={selectedEvent.pair || "—"} />
+                    <MiniBox
+                      label="Confidence"
+                      value={`${Math.round((selectedEvent.botConfidence || 0) * 100)}%`}
+                      subtext={selectedEvent.sweepType || "—"}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      padding: "10px 12px",
+                      borderRadius: 14,
+                      background: "rgba(255,255,255,0.025)",
+                      border: `1px solid ${palette.borderSoft}`,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        fontSize: 10,
+                        color: palette.textDim,
+                        marginBottom: 7,
+                        textTransform: "uppercase",
+                        letterSpacing: 0.8,
+                        fontWeight: 800,
+                      }}
+                    >
+                      <span>Setup Strength</span>
+                      <span>
+                        {Math.round((selectedEvent.botConfidence || 0) * 100)}%
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: 6,
+                        borderRadius: 999,
+                        background: "rgba(255,255,255,0.08)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${Math.max(4, Math.round((selectedEvent.botConfidence || 0) * 100))}%`,
+                          height: "100%",
+                          borderRadius: 999,
+                          background:
+                            (selectedEvent.botConfidence || 0) >= 0.7
+                              ? "linear-gradient(90deg,#22c55e,#86efac)"
+                              : (selectedEvent.botConfidence || 0) >= 0.45
+                                ? "linear-gradient(90deg,#f59e0b,#fde68a)"
+                                : "linear-gradient(90deg,#fb7185,#fecdd3)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 8,
+                    }}
+                  >
+                    <MiniBox
+                      label="Pattern"
+                      value={
+                        selectedEvent.pattern || selectedEvent.sweepType || "—"
+                      }
+                      subtext={selectedEvent.structure || ""}
+                    />
+                    <MiniBox
+                      label="State"
+                      value={
+                        selectedEvent.tradeState ||
+                        getSignalState(selectedEvent.timestampUtc) ||
+                        "—"
+                      }
+                    />
+                  </div>
+                </>
+              ) : (
+                <div
+                  style={{
+                    display: "grid",
+                    placeItems: "center",
+                    height: 120,
+                    gap: 8,
+                    opacity: 0.4,
+                  }}
+                >
+                  <div style={{ fontSize: 28 }}>📡</div>
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: palette.textSoft,
+                      textAlign: "center",
+                    }}
+                  >
+                    Select a signal
+                    <br />
+                    from the radar
+                  </div>
                 </div>
-              </div>
-
-              {/* Pattern + State */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                }}
-              >
-                <MiniBox
-                  label="Pattern"
-                  value={
-                    selectedEvent?.pattern || selectedEvent?.sweepType || "—"
-                  }
-                  subtext={selectedEvent?.structure || ""}
-                />
-                <MiniBox
-                  label="State"
-                  value={
-                    selectedEvent?.tradeState ||
-                    getSignalState(selectedEvent?.timestampUtc) ||
-                    "—"
-                  }
-                />
-              </div>
-
+              )}
               <Divider />
-              <SectionLabel>Prop Rules · {activePreset.label}</SectionLabel>
-
-              {/* Prop status */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                }}
-              >
-                <MiniBox
-                  label="Daily Limit"
-                  value={money(propStatus.dailyLoss)}
-                  tone={propStatus.tone === "short" ? "short" : null}
-                />
-                <MiniBox
-                  label="Max Drawdown"
-                  value={money(propStatus.maxDrawdown)}
-                />
+              <SectionLabel>Prop Challenge</SectionLabel>
+              <div style={{ display: "grid", gap: 6 }}>
+                <FieldLabel label="Firm / Preset">
+                  <select
+                    style={{ ...fieldStyle, fontSize: 12, padding: "6px 10px" }}
+                    value={propAccount.presetId}
+                    onChange={(e) =>
+                      setPropAccount((prev) => ({
+                        ...prev,
+                        presetId: e.target.value,
+                      }))
+                    }
+                  >
+                    {PROP_PRESETS.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.label}
+                      </option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                {activePreset.id !== "none" && (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 6,
+                    }}
+                  >
+                    <FieldLabel label="Account Size">
+                      <select
+                        style={{
+                          ...fieldStyle,
+                          fontSize: 12,
+                          padding: "6px 8px",
+                        }}
+                        value={propAccount.accountSize}
+                        onChange={(e) =>
+                          setPropAccount((prev) => ({
+                            ...prev,
+                            accountSize: Number(e.target.value),
+                          }))
+                        }
+                      >
+                        {activePreset.accountSizes.map((s) => (
+                          <option key={s} value={s}>
+                            {s === 0 ? "Off" : `$${s.toLocaleString()}`}
+                          </option>
+                        ))}
+                      </select>
+                    </FieldLabel>
+                    <FieldLabel label="Phase">
+                      <select
+                        style={{
+                          ...fieldStyle,
+                          fontSize: 12,
+                          padding: "6px 8px",
+                        }}
+                        value={propAccount.phase}
+                        onChange={(e) =>
+                          setPropAccount((prev) => ({
+                            ...prev,
+                            phase: e.target.value,
+                          }))
+                        }
+                      >
+                        {activePreset.phases.map((p) => (
+                          <option key={p}>{p}</option>
+                        ))}
+                      </select>
+                    </FieldLabel>
+                  </div>
+                )}
               </div>
-              <MiniBox
-                label="Profit Target"
-                value={money(propStatus.target)}
-                subtext={activePreset.rules.consistencyHint}
-              />
-
+              {activePreset.id !== "none" && (
+                <>
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+                      gap: 6,
+                    }}
+                  >
+                    {[
+                      [
+                        "Daily Limit",
+                        money(propStatus.dailyLoss),
+                        propStatus.tone === "short"
+                          ? palette.short
+                          : propStatus.tone === "gold"
+                            ? palette.gold
+                            : palette.text,
+                      ],
+                      ["Drawdown", money(propStatus.maxDrawdown), palette.text],
+                      ["Target", money(propStatus.target), palette.long],
+                    ].map(([label, val, color]) => (
+                      <div
+                        key={label}
+                        style={{
+                          border: `1px solid ${palette.borderSoft}`,
+                          borderRadius: 10,
+                          padding: "8px 10px",
+                          display: "grid",
+                          gap: 3,
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontSize: 9,
+                            color: palette.textDim,
+                            textTransform: "uppercase",
+                            letterSpacing: 0.8,
+                            fontWeight: 800,
+                          }}
+                        >
+                          {label}
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 900, color }}>
+                          {val}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {decisionRiskAmount &&
+                    propStatus.dailyLoss > 0 &&
+                    (() => {
+                      const usagePct = Math.min(
+                        100,
+                        Math.round(
+                          (decisionRiskAmount / propStatus.dailyLoss) * 100,
+                        ),
+                      );
+                      const barColor =
+                        usagePct >= 75
+                          ? palette.short
+                          : usagePct >= 35
+                            ? palette.gold
+                            : palette.long;
+                      return (
+                        <div
+                          style={{
+                            padding: "10px 12px",
+                            borderRadius: 12,
+                            background: "rgba(255,255,255,0.025)",
+                            border: `1px solid ${palette.borderSoft}`,
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              justifyContent: "space-between",
+                              fontSize: 10,
+                              color: palette.textDim,
+                              marginBottom: 7,
+                              textTransform: "uppercase",
+                              letterSpacing: 0.8,
+                              fontWeight: 800,
+                            }}
+                          >
+                            <span>Daily Limit Used</span>
+                            <span style={{ color: barColor }}>{usagePct}%</span>
+                          </div>
+                          <div
+                            style={{
+                              height: 6,
+                              borderRadius: 999,
+                              background: "rgba(255,255,255,0.08)",
+                              overflow: "hidden",
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: `${usagePct}%`,
+                                height: "100%",
+                                borderRadius: 999,
+                                background: barColor,
+                                transition: "width 0.3s ease",
+                              }}
+                            />
+                          </div>
+                          <div
+                            style={{
+                              fontSize: 11,
+                              color: palette.textSoft,
+                              marginTop: 6,
+                            }}
+                          >
+                            {money(decisionRiskAmount)} risk ·{" "}
+                            {money(propStatus.dailyLoss - decisionRiskAmount)}{" "}
+                            remaining
+                          </div>
+                        </div>
+                      );
+                    })()}
+                </>
+              )}
               <Divider />
               <SectionLabel>Execution Note</SectionLabel>
-
               <div
                 style={{
                   padding: "9px 11px",
@@ -3309,7 +4337,6 @@ export default function AppPreBeta() {
                 {selectedEvent?.session || "—"} ·{" "}
                 {selectedEvent?.emaContext || "No EMA context"}
               </div>
-
               {selectedEvent?.currentPrice && (
                 <MiniBox
                   label="Current Price"
@@ -3321,7 +4348,7 @@ export default function AppPreBeta() {
           </div>
         </div>
 
-        {/* JOURNAL HEADER */}
+        {/* JOURNAL */}
         <div style={{ ...styles.journalShell }}>
           <div style={styles.journalHeader}>
             <div>
@@ -3370,14 +4397,13 @@ export default function AppPreBeta() {
             </div>
           </div>
 
-          {/* RR summary row */}
           <div
             style={{
               padding: "12px 14px",
               borderBottom: `1px solid ${palette.borderSoft}`,
             }}
           >
-            <div style={styles.topCardRow}>
+            <div style={styles.topCardRow} className="llab-top-card-row">
               <MiniBox
                 label="Planned RR1"
                 value={rrText(decisionPlannedRR.rr1)}
@@ -3386,7 +4412,11 @@ export default function AppPreBeta() {
               <MiniBox
                 label="Planned RR2"
                 value={rrText(decisionPlannedRR.rr2)}
-                subtext={`Session · ${decisionForm.session}`}
+                subtext={
+                  decisionForm.session && decisionForm.session !== "Off-Hours"
+                    ? `Session · ${decisionForm.session}`
+                    : "Session · —"
+                }
               />
               <MiniBox
                 label="Realized RR"
@@ -3408,7 +4438,6 @@ export default function AppPreBeta() {
             </div>
           </div>
 
-          {/* Form */}
           <div style={{ padding: "14px 14px 18px" }}>
             <SectionLabel>Event Context</SectionLabel>
             <div
@@ -3418,6 +4447,7 @@ export default function AppPreBeta() {
                 gap: 10,
                 marginBottom: 16,
               }}
+              className="llab-form-4col"
             >
               <FieldLabel label="Pair">
                 <input
@@ -3469,167 +4499,230 @@ export default function AppPreBeta() {
               </FieldLabel>
             </div>
 
-            <SectionLabel>Execution Details</SectionLabel>
-            <div
+            {/* Execution Details — collapsible advanced section */}
+            <button
+              type="button"
+              onClick={() => setShowAdvancedForm((p) => !p)}
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(4,minmax(0,1fr))",
-                gap: 10,
-                marginBottom: 16,
+                appearance: "none",
+                border: `1px solid ${palette.borderSoft}`,
+                borderRadius: 10,
+                padding: "7px 14px",
+                background: "rgba(255,255,255,0.03)",
+                color: palette.textDim,
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 800,
+                letterSpacing: 0.8,
+                textTransform: "uppercase",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginBottom: 12,
               }}
             >
-              <FieldLabel label="Sweep Type">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.sweepType}
-                  onChange={(e) => updateDecision("sweepType", e.target.value)}
-                >
-                  {["High Sweep", "Low Sweep", "Equal Highs", "Equal Lows"].map(
-                    (v) => (
+              <span style={{ fontSize: 10 }}>
+                {showAdvancedForm ? "▼" : "▶"}
+              </span>
+              {showAdvancedForm ? "Hide" : "Show"} Execution Details
+            </button>
+            {showAdvancedForm && (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(4,minmax(0,1fr))",
+                  gap: 10,
+                  marginBottom: 16,
+                }}
+                className="llab-form-4col"
+              >
+                <FieldLabel label="Sweep Type">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.sweepType}
+                    onChange={(e) =>
+                      updateDecision("sweepType", e.target.value)
+                    }
+                  >
+                    {[
+                      "High Sweep",
+                      "Low Sweep",
+                      "Equal Highs",
+                      "Equal Lows",
+                    ].map((v) => (
                       <option key={v}>{v}</option>
-                    ),
-                  )}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="EMA Context">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.emaContext}
-                  onChange={(e) => updateDecision("emaContext", e.target.value)}
-                >
-                  {[
-                    "EMA99 Rejection",
-                    "EMA99 Support",
-                    "EMA25 Reclaim",
-                    "None",
-                  ].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Action">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.action}
-                  onChange={(e) => updateDecision("action", e.target.value)}
-                >
-                  {["Taken", "Passed"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Timing">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.timing}
-                  onChange={(e) => updateDecision("timing", e.target.value)}
-                >
-                  {["On Confirmation", "Early", "Chase Entry"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Execution Type">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.executionType}
-                  onChange={(e) =>
-                    updateDecision("executionType", e.target.value)
-                  }
-                >
-                  {[
-                    "Limit Retest",
-                    "Market Confirmation",
-                    "Breakdown Entry",
-                  ].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="HTF Bias">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.htfBias}
-                  onChange={(e) => updateDecision("htfBias", e.target.value)}
-                >
-                  {["Bearish", "Bullish", "Neutral"].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Entry Trigger">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.entryTrigger}
-                  onChange={(e) =>
-                    updateDecision("entryTrigger", e.target.value)
-                  }
-                >
-                  {["Reclaim Failure", "Breakdown", "Wick Rejection"].map(
-                    (v) => (
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="EMA Context">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.emaContext}
+                    onChange={(e) =>
+                      updateDecision("emaContext", e.target.value)
+                    }
+                  >
+                    {[
+                      "EMA99 Rejection",
+                      "EMA99 Support",
+                      "EMA25 Reclaim",
+                      "None",
+                    ].map((v) => (
                       <option key={v}>{v}</option>
-                    ),
-                  )}
-                </select>
-              </FieldLabel>
-              <FieldLabel label="Liquidity Level">
-                <select
-                  style={fieldStyle}
-                  value={decisionForm.liquidityLevel}
-                  onChange={(e) =>
-                    updateDecision("liquidityLevel", e.target.value)
-                  }
-                >
-                  {[
-                    "Range High",
-                    "Range Low",
-                    "Session High",
-                    "Session Low",
-                  ].map((v) => (
-                    <option key={v}>{v}</option>
-                  ))}
-                </select>
-              </FieldLabel>
-            </div>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Action">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.action}
+                    onChange={(e) => updateDecision("action", e.target.value)}
+                  >
+                    {["Taken", "Passed"].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Timing">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.timing}
+                    onChange={(e) => updateDecision("timing", e.target.value)}
+                  >
+                    {["On Confirmation", "Early", "Chase Entry"].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Execution Type">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.executionType}
+                    onChange={(e) =>
+                      updateDecision("executionType", e.target.value)
+                    }
+                  >
+                    {[
+                      "Limit Retest",
+                      "Market Confirmation",
+                      "Breakdown Entry",
+                    ].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="HTF Bias">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.htfBias}
+                    onChange={(e) => updateDecision("htfBias", e.target.value)}
+                  >
+                    {["Bearish", "Bullish", "Neutral"].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Entry Trigger">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.entryTrigger}
+                    onChange={(e) =>
+                      updateDecision("entryTrigger", e.target.value)
+                    }
+                  >
+                    {["Reclaim Failure", "Breakdown", "Wick Rejection"].map(
+                      (v) => (
+                        <option key={v}>{v}</option>
+                      ),
+                    )}
+                  </select>
+                </FieldLabel>
+                <FieldLabel label="Liquidity Level">
+                  <select
+                    style={fieldStyle}
+                    value={decisionForm.liquidityLevel}
+                    onChange={(e) =>
+                      updateDecision("liquidityLevel", e.target.value)
+                    }
+                  >
+                    {[
+                      "Range High",
+                      "Range Low",
+                      "Session High",
+                      "Session Low",
+                    ].map((v) => (
+                      <option key={v}>{v}</option>
+                    ))}
+                  </select>
+                </FieldLabel>
+              </div>
+            )}
 
             <SectionLabel>Price Levels</SectionLabel>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "repeat(6,minmax(0,1fr))",
+                gridTemplateColumns: "repeat(4,minmax(0,1fr))",
                 gap: 10,
-                marginBottom: 16,
+                marginBottom: 8,
               }}
+              className="llab-form-4col"
             >
               <FieldLabel label="Entry">
                 <input
-                  style={fieldStyle}
+                  style={{
+                    ...fieldStyle,
+                    borderColor: "rgba(96,165,250,0.4)",
+                    color: "#60a5fa",
+                  }}
                   value={decisionForm.entry}
                   onChange={(e) => updateDecision("entry", e.target.value)}
                 />
               </FieldLabel>
               <FieldLabel label="Stop">
                 <input
-                  style={fieldStyle}
+                  style={{
+                    ...fieldStyle,
+                    borderColor: "rgba(239,68,68,0.4)",
+                    color: "#ef4444",
+                  }}
                   value={decisionForm.stop}
                   onChange={(e) => updateDecision("stop", e.target.value)}
                 />
               </FieldLabel>
               <FieldLabel label="TP1">
                 <input
-                  style={fieldStyle}
+                  style={{
+                    ...fieldStyle,
+                    borderColor: "rgba(74,222,128,0.4)",
+                    color: "#4ade80",
+                  }}
                   value={decisionForm.tp1}
                   onChange={(e) => updateDecision("tp1", e.target.value)}
                 />
               </FieldLabel>
               <FieldLabel label="TP2">
                 <input
-                  style={fieldStyle}
+                  style={{
+                    ...fieldStyle,
+                    borderColor: "rgba(134,239,172,0.4)",
+                    color: "#86efac",
+                  }}
                   value={decisionForm.tp2}
                   onChange={(e) => updateDecision("tp2", e.target.value)}
                 />
               </FieldLabel>
-              <FieldLabel label="Exit">
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 10,
+                marginBottom: 16,
+              }}
+              className="llab-price-levels"
+            >
+              <FieldLabel label="Exit Price">
                 <input
                   style={fieldStyle}
                   value={decisionForm.exit}
@@ -3641,6 +4734,7 @@ export default function AppPreBeta() {
                   style={fieldStyle}
                   value={decisionForm.pnl}
                   onChange={(e) => updateDecision("pnl", e.target.value)}
+                  placeholder="e.g. 142.50 or -80"
                 />
               </FieldLabel>
             </div>
@@ -3651,8 +4745,9 @@ export default function AppPreBeta() {
                 display: "grid",
                 gridTemplateColumns: "repeat(4,minmax(0,1fr))",
                 gap: 10,
-                marginBottom: 16,
+                marginBottom: 8,
               }}
+              className="llab-form-4col"
             >
               <FieldLabel label="Outcome">
                 <select
@@ -3704,6 +4799,16 @@ export default function AppPreBeta() {
                   }
                 />
               </FieldLabel>
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(3,minmax(0,1fr))",
+                gap: 10,
+                marginBottom: 16,
+              }}
+              className="llab-form-3col"
+            >
               <FieldLabel label="Setup Quality (1–10)">
                 <input
                   style={fieldStyle}
@@ -3735,10 +4840,15 @@ export default function AppPreBeta() {
 
             <FieldLabel label="Trade Notes">
               <textarea
-                style={{ ...fieldStyle, minHeight: 80, resize: "vertical" }}
+                style={{
+                  ...fieldStyle,
+                  minHeight: 140,
+                  resize: "vertical",
+                  lineHeight: 1.6,
+                }}
                 value={decisionForm.notes}
                 onChange={(e) => updateDecision("notes", e.target.value)}
-                placeholder="Describe your reasoning, what you saw, how you felt…"
+                placeholder="Describe your reasoning, what you saw, how you felt. What was the structure? Did price sweep cleanly? Any hesitation on entry?"
               />
             </FieldLabel>
 
@@ -3748,12 +4858,32 @@ export default function AppPreBeta() {
                 gap: 10,
                 flexWrap: "wrap",
                 alignItems: "center",
-                marginTop: 12,
+                marginTop: 16,
               }}
             >
+              <button
+                style={{
+                  ...styles.primaryButton,
+                  fontSize: 15,
+                  padding: "12px 28px",
+                  letterSpacing: 0.3,
+                }}
+                type="button"
+                onClick={saveDecision}
+              >
+                Log Trade / Apply Result
+              </button>
+              <button
+                style={{ ...styles.button, fontSize: 12 }}
+                type="button"
+                onClick={runAiReviewNow}
+              >
+                {aiReviewLoading ? "Running AI…" : "🤖 Run AI Review"}
+              </button>
               <label
                 style={{
                   ...styles.button,
+                  fontSize: 12,
                   display: "inline-flex",
                   alignItems: "center",
                   cursor: "pointer",
@@ -3770,42 +4900,20 @@ export default function AppPreBeta() {
               {decisionForm.screenshot && (
                 <Pill tone="long">Screenshot ready</Pill>
               )}
-              <button
-                style={styles.primaryButton}
-                type="button"
-                onClick={saveDecision}
-              >
-                Log Trade / Apply Result
-              </button>
-              <button
-                style={styles.button}
-                type="button"
-                onClick={runAiReviewNow}
-              >
-                {aiReviewLoading ? "Running AI…" : "Run AI Review"}
-              </button>
             </div>
-
-            {(aiReviewLoading || aiReviewResult) && (
-              <div style={{ marginTop: 14 }}>
-                <AiReviewPanel
-                  entry={null}
-                  liveReview={aiReviewResult}
-                  loading={aiReviewLoading}
-                  locked={!featureFlags.aiReview}
-                />
-              </div>
-            )}
           </div>
         </div>
-        {/* RECENT JOURNAL ENTRIES */}
+
+        {/* RECENT ENTRIES */}
         <div style={{ ...styles.journalShell }}>
           <div style={styles.journalHeader}>
             <div>
               <div style={{ fontWeight: 900, fontSize: 15 }}>
                 Recent Entries
               </div>
-              <div style={styles.subtext}>Click a card to expand AI review</div>
+              <div style={styles.subtext}>
+                Click any card to expand · AI grade · Quick close open trades
+              </div>
             </div>
             <button
               style={{ ...styles.button, fontSize: 12 }}
@@ -3815,7 +4923,6 @@ export default function AppPreBeta() {
               {showInsights ? "Show Less" : "Show All"}
             </button>
           </div>
-
           <div style={{ padding: 12, display: "grid", gap: 8 }}>
             {displayDecisions.length ? (
               displayDecisions.map((log) => {
@@ -3827,17 +4934,25 @@ export default function AppPreBeta() {
                     key={log.id}
                     type="button"
                     onClick={() => toggleLogCard(log.id)}
+                    onMouseEnter={() => setHoveredLogId(log.id)}
+                    onMouseLeave={() => setHoveredLogId(null)}
                     style={{
                       ...cardButtonReset,
                       padding: "13px 14px",
                       borderRadius: 16,
-                      border: `1px solid ${isExpanded ? getToneBorder(tone) : palette.border}`,
+                      border: `1px solid ${isExpanded ? getToneBorder(tone) : hoveredLogId === log.id ? "rgba(255,255,255,0.14)" : palette.border}`,
                       background: isExpanded
                         ? "rgba(255,255,255,0.025)"
-                        : palette.card,
+                        : hoveredLogId === log.id
+                          ? "rgba(255,255,255,0.04)"
+                          : palette.card,
                       display: "grid",
                       gap: 10,
                       transition: "all 0.15s ease",
+                      transform:
+                        hoveredLogId === log.id && !isExpanded
+                          ? "translateY(-1px)"
+                          : "translateY(0)",
                     }}
                   >
                     <div
@@ -3873,9 +4988,33 @@ export default function AppPreBeta() {
                             </Pill>
                           )}
                         </div>
-                        <div style={{ color: palette.textSoft, fontSize: 12 }}>
-                          {log.eventType} · {log.sweepType} ·{" "}
-                          {formatDateTime(log.timestamp)}
+                        <div
+                          style={{
+                            color: palette.textSoft,
+                            fontSize: 12,
+                            display: "flex",
+                            gap: 6,
+                            alignItems: "center",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          <span
+                            style={{
+                              padding: "2px 7px",
+                              borderRadius: 6,
+                              background: "rgba(255,255,255,0.05)",
+                              border: `1px solid ${palette.borderSoft}`,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: palette.textDim,
+                            }}
+                          >
+                            {log.eventType}
+                          </span>
+                          <span style={{ opacity: 0.5 }}>·</span>
+                          <span>{log.sweepType}</span>
+                          <span style={{ opacity: 0.5 }}>·</span>
+                          <span>{formatDateTime(log.timestamp)}</span>
                         </div>
                       </div>
                       <div
@@ -3909,7 +5048,6 @@ export default function AppPreBeta() {
                         )}
                       </div>
                     </div>
-
                     {isExpanded && (
                       <div
                         style={{
@@ -3919,7 +5057,10 @@ export default function AppPreBeta() {
                           borderTop: `1px solid ${palette.borderSoft}`,
                         }}
                       >
-                        <div style={styles.topCardRow}>
+                        <div
+                          style={styles.topCardRow}
+                          className="llab-top-card-row"
+                        >
                           <MiniBox
                             label="Entry / Stop"
                             value={`${num(log.entry)} / ${num(log.stop)}`}
@@ -3969,6 +5110,35 @@ export default function AppPreBeta() {
                           >
                             {log.notes}
                           </div>
+                        )}
+                        {(log.outcome === "Open" || !log.outcome) && (
+                          <QuickClose
+                            logId={log.id}
+                            onClose={(id, exit, outcome, pnl) => {
+                              setLoggedDecisions((prev) =>
+                                prev.map((d) =>
+                                  d.id === id
+                                    ? {
+                                        ...d,
+                                        exit,
+                                        outcome,
+                                        pnl,
+                                        realizedRR: calcRealizedRR(
+                                          d.directionBias,
+                                          d.entry,
+                                          d.stop,
+                                          exit,
+                                        ),
+                                      }
+                                    : d,
+                                ),
+                              );
+                              toast(
+                                `${log.pair} closed as ${outcome}`,
+                                "success",
+                              );
+                            }}
+                          />
                         )}
                       </div>
                     )}
