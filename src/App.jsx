@@ -3781,8 +3781,6 @@ export default function AppPreBeta() {
 
         <BriefingPanel />
 
-        
-
         {/* MAIN GRID */}
         <div style={styles.mainGrid} className="llab-main-grid">
           {/* LEFT: RADAR */}
@@ -5354,15 +5352,13 @@ export default function AppPreBeta() {
                             }
                           />
                         </div>
-                        {log.aiVerdict && (
-                          <div
-                            style={{ ...styles.aiSummaryCard, fontSize: 12 }}
-                          >
-                            <div style={styles.aiLabel}>Verdict</div>
-                            <div style={{ marginTop: 4, fontWeight: 700 }}>
-                              {log.aiVerdict}
-                            </div>
-                          </div>
+                        {(log.aiVerdict || log.aiGrade) && (
+                          <AiReviewPanel
+                            entry={log}
+                            liveReview={null}
+                            loading={false}
+                            locked={!featureFlags.aiReview}
+                          />
                         )}
                         {log.notes && (
                           <div
