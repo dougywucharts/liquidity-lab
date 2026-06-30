@@ -2967,12 +2967,14 @@ export default function AppPreBeta() {
       }));
     } catch (err) {
       const msg = String(err?.message || "");
-      toast(
-        msg.toLowerCase().includes("daily screenshot limit")
-          ? "Daily screenshot limit reached"
-          : `Log save failed: ${msg}`,
-        "warn",
-      );
+      if (msg.toLowerCase().includes("daily screenshot limit")) {
+        toast("Daily screenshot limit reached", "warn");
+      } else if (msg.toLowerCase().includes("log limit reached")) {
+        toast("Log limit reached. Upgrade to log more trades.", "warn");
+        setActiveTab("billing");
+      } else {
+        toast(`Log save failed: ${msg}`, "warn");
+      }
       return;
     }
 
