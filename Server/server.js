@@ -1187,6 +1187,39 @@ app.post('/auth/register', async (req, res) => {
     const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, {
       expiresIn: '7d'
     })
+
+    // Send welcome email
+    if (resend && ALERT_FROM_EMAIL) {
+      resend.emails
+        .send({
+          from: ALERT_FROM_EMAIL,
+          to: user.email,
+          subject: "Welcome to Liquidity Lab — You're in.",
+          html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#03060b;color:#f4f7fb;padding:40px 32px;border-radius:16px;">
+        <div style="font-size:22px;font-weight:900;margin-bottom:8px;">Liquidity Lab</div>
+        <div style="font-size:12px;color:#ef4444;letter-spacing:2px;text-transform:uppercase;margin-bottom:32px;">Red October Systems</div>
+        <h1 style="font-size:28px;font-weight:900;margin:0 0 16px;">You're in.</h1>
+        <p style="color:rgba(244,247,251,0.7);line-height:1.6;margin-bottom:24px;">Your free account is ready. The radar is live and scanning 50+ pairs right now.</p>
+        <a href="https://app.redoctobersystems.com" style="display:inline-block;padding:14px 28px;background:#ef4444;color:#fff;font-weight:900;text-decoration:none;border-radius:10px;margin-bottom:32px;">Open Liquidity Lab →</a>
+        <hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:24px 0;">
+        <p style="font-size:13px;color:rgba(244,247,251,0.4);line-height:1.6;">
+          <strong style="color:rgba(244,247,251,0.7);">What's included free:</strong><br>
+          Live radar feed · Manual trade journal · 50 log entries · Session clocks
+        </p>
+        <p style="font-size:13px;color:rgba(244,247,251,0.4);line-height:1.6;margin-top:16px;">
+          Upgrade to Core ($29/mo) for AI trade reviews, screenshot coaching, and Members Vault.<br>
+          <a href="https://app.redoctobersystems.com/billing" style="color:#ef4444;">View plans →</a>
+        </p>
+        <p style="font-size:11px;color:rgba(244,247,251,0.25);margin-top:32px;">Red October Systems · support@redoctobersystems.com</p>
+      </div>
+    `
+        })
+        .catch(err =>
+          console.error('[EMAIL] Welcome email failed:', err.message)
+        )
+    }
+
     return res.json({
       ok: true,
       token,
