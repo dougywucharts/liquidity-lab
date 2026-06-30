@@ -1189,6 +1189,9 @@ app.post('/auth/register', async (req, res) => {
     })
 
     // Send welcome email
+
+    console.log('[EMAIL] Attempting welcome email to:', user.email)
+
     if (resend && ALERT_FROM_EMAIL) {
       resend.emails
         .send({
