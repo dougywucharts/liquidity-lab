@@ -1702,6 +1702,28 @@ app.get('/logs', requireAuth, async (req, res) => {
 app.post('/logs', requireAuth, async (req, res) => {
   try {
     const payload = req.body || {}
+
+    // Enforce log limits by plan
+    const plan = req.user.billingPlan || 'starter'
+    const LOG_LIMITS = {
+      starter: 50,
+      core: 500,
+      pro: Infinity,
+      pro_beta: Infinity
+    }
+    const limit = LOG_LIMITS[plan] ?? 50
+    if (limit !== Infinity) {
+      const currentCount = await prisma.tradeLog.count({
+        where: { userId: req.user.id }
+      })
+      if (currentCount >= limit) {
+        return res.status(403).json({
+          error: 'Log limit reached',
+          message: `Your ${plan} plan allows ${limit} log entries. Upgrade to log more trades.`
+        })
+      }
+    }
+
     if (payload.screenshotUrl) {
       const usage = canUseScreenshot(req.user, 5)
       if (!usage.allowed)
