@@ -1180,7 +1180,7 @@ app.post('/auth/register', async (req, res) => {
         passwordHash,
         billingPlan: BETA_FULL_ACCESS ? 'pro_beta' : 'starter',
         stripeStatus: BETA_FULL_ACCESS ? 'beta' : '',
-        isBetaUser: true,
+        isBetaUser: false,
         betaGrantedAt: new Date()
       }
     })
