@@ -1317,10 +1317,9 @@ app.get('/me', requireAuth, async (req, res) => {
         stripeCustomerId: user.stripeCustomerId || '',
         isBetaUser: user.isBetaUser,
         screenshotRemaining,
-        aiRemaining: Math.max(
-          0,
-          AI_REVIEW_DAILY_LIMIT - (user.aiReviewCount || 0)
-        ),
+        aiRemaining: hasProAccess
+          ? Math.max(0, AI_REVIEW_DAILY_LIMIT - (user.aiReviewCount || 0))
+          : null,
         featureFlags: {
           manualJournal: true,
           aiReview: hasProAccess,
