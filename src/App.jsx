@@ -1484,6 +1484,7 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
   const extraSeriesRef = useRef([]);
+  const priceLinesRef = useRef([]); // FIX: track price lines so they can be removed on redraw
   const [error, setError] = useState(null);
   const [chartReady, setChartReady] = useState(false);
 
@@ -1530,6 +1531,8 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
+      extraSeriesRef.current = []; // FIX: clear refs on teardown
+      priceLinesRef.current = []; // FIX: clear price line refs on teardown
     };
   }, []);
 
@@ -1546,21 +1549,35 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
         if (cancelled || !data?.candles?.length) return;
         const chart = chartRef.current;
         const candles = candleSeriesRef.current;
+        if (!chart || !candles) return; // guard: chart torn down while fetch was in flight
+
+        // Remove old EMA series
         extraSeriesRef.current.forEach((s) => {
           try {
             chart.removeSeries(s);
           } catch (e) {}
         });
         extraSeriesRef.current = [];
+
+        // FIX: remove old price lines before drawing new ones (was stacking duplicates)
+        priceLinesRef.current.forEach((line) => {
+          try {
+            candles.removePriceLine(line);
+          } catch (e) {}
+        });
+        priceLinesRef.current = [];
+
         candles.setData(data.candles);
+
+        // FIX: track each created price line so the next redraw can remove it
         [
           ["E", entry, "#f6c453"],
           ["S", stop, "#fb7185"],
           ["T1", tp1, "#4ade80"],
           ["T2", tp2, "#4ade80"],
         ].forEach(([title, value, color]) => {
-          if (Number.isFinite(Number(value)))
-            candles.createPriceLine({
+          if (Number.isFinite(Number(value))) {
+            const line = candles.createPriceLine({
               price: Number(value),
               color,
               lineWidth: title === "E" ? 2 : 1,
@@ -1568,7 +1585,10 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
               axisLabelVisible: true,
               title,
             });
+            priceLinesRef.current.push(line);
+          }
         });
+
         function calcEma(candles, period) {
           if (candles.length < period) return [];
           const k = 2 / (period + 1);
@@ -2326,6 +2346,32 @@ export default function AppPreBeta() {
     password: "",
     confirm: "",
   });
+
+  const [filterOffHours, setFilterOffHours] = useState(() => {
+    try {
+      return localStorage.getItem("filterOffHours") === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  function isOffHours() {
+    const hour = new Date().getUTCHours();
+    return !(hour >= 7 && hour < 22);
+  }
+
+  const MAJOR_PAIRS = [
+    "BTC/USDT",
+    "ETH/USDT",
+    "SOL/USDT",
+    "XRP/USDT",
+    "DOGE/USDT",
+    "LINK/USDT",
+    "AVAX/USDT",
+    "BNB/USDT",
+    "ADA/USDT",
+  ];
+
   const [authTab, setAuthTab] = useState(() => {
     try {
       return new URLSearchParams(window.location.search).get("register")
@@ -2574,7 +2620,11 @@ export default function AppPreBeta() {
       const et = parseEventDate(existing.events?.[0]?.timestampUtc).getTime();
       if (wt > et) byPair.set(key, wave);
     });
-    return Array.from(byPair.values()).slice(0, 10);
+    let result = Array.from(byPair.values()).slice(0, 10);
+    if (filterOffHours && isOffHours()) {
+      result = result.filter((w) => MAJOR_PAIRS.includes(w.pair));
+    }
+    return result;
   }, [activeWaves]);
 
   const tickerItems = useMemo(() => bestTickerItems(waves, 10), [waves]);
