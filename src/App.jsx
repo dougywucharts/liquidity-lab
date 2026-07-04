@@ -1477,14 +1477,23 @@ function AiReviewPanel({ entry, liveReview, loading, locked }) {
   );
 }
 
-// ─── LightweightExecutionChart ────────────────────────────────────────────────
+// Dynamic price precision — small caps need more decimals than BTC
+function getPricePrecision(price) {
+  const p = Math.abs(Number(price));
+  if (!Number.isFinite(p) || p === 0) return 2;
+  if (p >= 1000) return 2; // BTC, ETH
+  if (p >= 10) return 3; // SOL, LINK, AVAX
+  if (p >= 1) return 4; // ADA, XRP
+  if (p >= 0.01) return 5; // FET, DOGE
+  return 6; // PEPE-tier
+}
 
 function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
   const ref = useRef(null);
   const chartRef = useRef(null);
   const candleSeriesRef = useRef(null);
   const extraSeriesRef = useRef([]);
-  const priceLinesRef = useRef([]); // FIX: track price lines so they can be removed on redraw
+  const priceLinesRef = useRef([]); // tracked so redraw can remove them
   const [error, setError] = useState(null);
   const [chartReady, setChartReady] = useState(false);
 
@@ -1531,8 +1540,8 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
-      extraSeriesRef.current = []; // FIX: clear refs on teardown
-      priceLinesRef.current = []; // FIX: clear price line refs on teardown
+      extraSeriesRef.current = [];
+      priceLinesRef.current = [];
     };
   }, []);
 
@@ -1549,7 +1558,7 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
         if (cancelled || !data?.candles?.length) return;
         const chart = chartRef.current;
         const candles = candleSeriesRef.current;
-        if (!chart || !candles) return; // guard: chart torn down while fetch was in flight
+        if (!chart || !candles) return; // chart torn down mid-fetch
 
         // Remove old EMA series
         extraSeriesRef.current.forEach((s) => {
@@ -1559,7 +1568,7 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
         });
         extraSeriesRef.current = [];
 
-        // FIX: remove old price lines before drawing new ones (was stacking duplicates)
+        // Remove old price lines (prevents stacked duplicates)
         priceLinesRef.current.forEach((line) => {
           try {
             candles.removePriceLine(line);
@@ -1567,9 +1576,21 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
         });
         priceLinesRef.current = [];
 
+        // PRECISION FIX: scale decimals to the pair's price magnitude
+        // (FET at $0.18 needs 5 decimals; BTC at $60k needs 2)
+        const lastClose = data.candles[data.candles.length - 1]?.close;
+        const precision = getPricePrecision(lastClose);
+        candles.applyOptions({
+          priceFormat: {
+            type: "price",
+            precision,
+            minMove: Math.pow(10, -precision),
+          },
+        });
+
         candles.setData(data.candles);
 
-        // FIX: track each created price line so the next redraw can remove it
+        // Signal level lines — each tracked for cleanup on next redraw
         [
           ["E", entry, "#f6c453"],
           ["S", stop, "#fb7185"],
@@ -1620,6 +1641,29 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
           const emaData = calcEma(data.candles, period);
           if (emaData.length) s.setData(emaData);
         });
+
+        // Ensure ALL signal levels are inside the visible price range
+        // (fitContent only fits candles, so TP2 could sit off-screen)
+        const levelVals = [entry, stop, tp1, tp2]
+          .map(Number)
+          .filter(Number.isFinite);
+        if (levelVals.length) {
+          const t0 = data.candles[0].time;
+          const t1 = data.candles[data.candles.length - 1].time;
+          const rangeSeries = addTracked({
+            color: "transparent",
+            lineWidth: 1,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+            priceScaleId: "right",
+          });
+          rangeSeries.setData([
+            { time: t0, value: Math.min(...levelVals) },
+            { time: t1, value: Math.max(...levelVals) },
+          ]);
+        }
+
         chart.timeScale().fitContent();
         setError(null);
       } catch (err) {
