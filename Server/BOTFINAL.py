@@ -131,7 +131,7 @@ PRINT_EVERY_SYMBOL = True
 PRINT_CYCLE_SUMMARY = True
 HEARTBEAT_EVERY_N_SYMBOLS = 3
 
-USE_SMALL_TEST_BASKET = True
+USE_SMALL_TEST_BASKET = False
 TEST_SYMBOLS = [
     "ICP/USDT:USDT",
     "SUI/USDT:USDT",
@@ -159,27 +159,64 @@ LOG_FILE = os.path.join(LOG_FOLDER, "sweep_log.csv")
 # =========================================================
 
 SWEEP_HUNTER_SYMBOLS = [
-    "ICP/USDT:USDT",
-    "KAS/USDT:USDT",
-    "JASMY/USDT:USDT",
-    "ONDO/USDT:USDT",
-    "FET/USDT:USDT",
-    "FIL/USDT:USDT",
-    "SUI/USDT:USDT",
-    "SEI/USDT:USDT",
-    "OP/USDT:USDT",
-    "ARB/USDT:USDT",
-    "SOL/USDT:USDT",
-    "NEAR/USDT:USDT",
-    "APT/USDT:USDT",
-    "ROSE/USDT:USDT",
-    "MINA/USDT:USDT",
-    "DOGE/USDT:USDT",
-    "XRP/USDT:USDT",
-    "LINK/USDT:USDT",
-    "AVAX/USDT:USDT",
+    # Majors
     "BTC/USDT:USDT",
     "ETH/USDT:USDT",
+    "SOL/USDT:USDT",
+    "XRP/USDT:USDT",
+    "DOGE/USDT:USDT",
+    "AVAX/USDT:USDT",
+    "LINK/USDT:USDT",
+    "BNB/USDT:USDT",
+    "ADA/USDT:USDT",
+    "TRX/USDT:USDT",
+    # L2 / Alt L1
+    "ARB/USDT:USDT",
+    "OP/USDT:USDT",
+    "SUI/USDT:USDT",
+    "APT/USDT:USDT",
+    "SEI/USDT:USDT",
+    "NEAR/USDT:USDT",
+    "FTM/USDT:USDT",
+    "ATOM/USDT:USDT",
+    "DOT/USDT:USDT",
+    "INJ/USDT:USDT",
+    # AI / DePIN
+    "FET/USDT:USDT",
+    "ONDO/USDT:USDT",
+    "ICP/USDT:USDT",
+    "RENDER/USDT:USDT",
+    "WLD/USDT:USDT",
+    "TAO/USDT:USDT",
+    "AIOZ/USDT:USDT",
+    # DeFi
+    "UNI/USDT:USDT",
+    "AAVE/USDT:USDT",
+    "JUP/USDT:USDT",
+    "PENDLE/USDT:USDT",
+    "CRV/USDT:USDT",
+    # Meme / High vol
+    "PEPE/USDT:USDT",
+    "WIF/USDT:USDT",
+    "BONK/USDT:USDT",
+    "FLOKI/USDT:USDT",
+    # Storage / Infra
+    "FIL/USDT:USDT",
+    "KAS/USDT:USDT",
+    "MINA/USDT:USDT",
+    "ROSE/USDT:USDT",
+    "JASMY/USDT:USDT",
+    # Gaming / NFT
+    "IMX/USDT:USDT",
+    "GALA/USDT:USDT",
+    "SAND/USDT:USDT",
+    "AXS/USDT:USDT",
+    # Other liquid
+    "LTC/USDT:USDT",
+    "BCH/USDT:USDT",
+    "ETC/USDT:USDT",
+    "STX/USDT:USDT",
+    "TIA/USDT:USDT",
 ]
 
 # =========================================================
@@ -575,78 +612,194 @@ def calc_rr(direction, entry, stop, tp1, tp2):
         return None, None
 
 
+# =========================================================
+# RR PLAN v2 — entry zone, structural stop, moved-guard
+# (constants below can be moved to your config block later)
+# =========================================================
+
+ENTRY_ZONE_ATR_FRAC = 0.25      # zone depth as fraction of ATR
+SWING_PIVOT_WINDOW = 2          # bars each side for a pivot to count as a swing
+SWING_LOOKBACK_BARS = 60        # how far back to hunt for swing points (1m bars)
+STOP_ATR_PAD = 0.20             # ATR pad beyond the structural anchor
+MOVED_PROGRESS_MAX = 0.35       # >35% of the way to TP1 at creation = MOVED
+STOP_MAX_ATR_MULT = 3.0         # sanity cap: stop can't exceed 3x ATR from entry
+
+
+def find_swing_points(df, window=SWING_PIVOT_WINDOW, lookback=SWING_LOOKBACK_BARS):
+    """
+    Return (swing_lows, swing_highs) as lists of floats, most recent LAST.
+    A swing low is a bar whose low is strictly the minimum of the `window`
+    bars on each side; swing high is the mirror. Excludes the last `window`
+    bars (they can't be confirmed pivots yet).
+    """
+    tail = df.tail(lookback)
+    lows = tail["low"].values
+    highs = tail["high"].values
+    n = len(tail)
+
+    swing_lows, swing_highs = [], []
+    for i in range(window, n - window):
+        lo, hi = lows[i], highs[i]
+        if lo == min(lows[i - window : i + window + 1]) and \
+           lo < min(min(lows[i - window : i]), min(lows[i + 1 : i + window + 1])) + 1e-12:
+            swing_lows.append(float(lo))
+        if hi == max(highs[i - window : i + window + 1]) and \
+           hi > max(max(highs[i - window : i]), max(highs[i + 1 : i + window + 1])) - 1e-12:
+            swing_highs.append(float(hi))
+    return swing_lows, swing_highs
+
+
+def find_stop_level(direction, trigger_df, entry_ref, atr):
+    """
+    Anchor the stop to structure: beyond the extreme of the LAST TWO swing
+    lows (bullish) or swing highs (bearish), padded by STOP_ATR_PAD * ATR.
+    Falls back to a plain ATR stop when structure is missing or absurd.
+    Returns (stop_price, anchor_label).
+    """
+    swing_lows, swing_highs = find_swing_points(trigger_df)
+    px = float(trigger_df.iloc[-1]["close"])
+    pad = atr * STOP_ATR_PAD
+    max_dist = atr * STOP_MAX_ATR_MULT
+
+    if direction == "bullish":
+        candidates = [lo for lo in swing_lows if lo < entry_ref]
+        if len(candidates) >= 2:
+            anchor = min(candidates[-2:])          # lower of last two swing lows
+            stop = anchor - pad
+            label = "structure_2_lows"
+        elif len(candidates) == 1:
+            anchor = candidates[-1]
+            stop = anchor - pad
+            label = "structure_1_low"
+        else:
+            stop = entry_ref - max(px * STOP_BUFFER_PCT, atr * 0.60)
+            label = "atr_fallback"
+        if entry_ref - stop > max_dist:
+            stop = entry_ref - max_dist
+            label += "_capped"
+        if stop >= entry_ref:
+            stop = entry_ref - max(px * STOP_BUFFER_PCT, atr * 0.60)
+            label = "atr_fallback"
+        return stop, label
+
+    else:  # bearish
+        candidates = [hi for hi in swing_highs if hi > entry_ref]
+        if len(candidates) >= 2:
+            anchor = max(candidates[-2:])          # higher of last two swing highs
+            stop = anchor + pad
+            label = "structure_2_highs"
+        elif len(candidates) == 1:
+            anchor = candidates[-1]
+            stop = anchor + pad
+            label = "structure_1_high"
+        else:
+            stop = entry_ref + max(px * STOP_BUFFER_PCT, atr * 0.60)
+            label = "atr_fallback"
+        if stop - entry_ref > max_dist:
+            stop = entry_ref + max_dist
+            label += "_capped"
+        if stop <= entry_ref:
+            stop = entry_ref + max(px * STOP_BUFFER_PCT, atr * 0.60)
+            label = "atr_fallback"
+        return stop, label
+
+
 def build_rr_plan(direction, trigger_df, map_levels, sweep_level, reclaim_level=None):
     last = trigger_df.iloc[-1]
     atr = last["atr14"] if not pd.isna(last["atr14"]) else 0
     px = float(last["close"])
 
     base_level = float(sweep_level) if sweep_level is not None else px
-    buffer = max(px * STOP_BUFFER_PCT, atr * 0.15)
-    retest_offset = max(px * 0.0005, atr * 0.08)
+    zone_depth = max(px * 0.0005, atr * ENTRY_ZONE_ATR_FRAC)
 
     recent = trigger_df.tail(36).copy()
     local_high = float(recent["high"].max())
     local_low = float(recent["low"].min())
 
-    # ATR-scaled TP buffer — replaces fixed TP1_BUFFER_PCT/TP2_BUFFER_PCT
-    # Ensures meaningful separation between entry and TP levels on all price ranges
-    # Small coins (DOGE $0.08): ATR ~0.0003, buffer = 0.00015 — visible on chart
-    # Large coins (BTC $60k): ATR ~200, buffer = 100 — meaningful dollar distance
-    atr_tp1_buffer = atr * 0.50  # TP1 pulls back from local extreme by 0.5x ATR
-    atr_tp2_buffer = atr * 0.25  # TP2 extends beyond local extreme by 0.25x ATR
+    atr_tp1_buffer = atr * 0.50
+    atr_tp2_buffer = atr * 0.25
 
     if direction == "bullish":
-        entry = base_level + retest_offset
-        stop = base_level - buffer
-        risk = entry - stop
+        # ── ENTRY ZONE ────────────────────────────────────────────
+        # Bottom: the swept level (deepest acceptable retest).
+        # Top: reclaim close if available, else swept level + zone_depth.
+        entry_min = base_level
+        if reclaim_level is not None and float(reclaim_level) > base_level:
+            entry_max = min(float(reclaim_level), base_level + zone_depth * 2)
+        else:
+            entry_max = base_level + zone_depth
+        # canonical single "entry" = worst fill (top of zone for longs)
+        entry = entry_max
 
-        # TP1 = local high minus ATR buffer (conservative, high probability)
+        # ── STOP: structural anchor below last 2 swing lows ──────
+        stop, stop_anchor = find_stop_level("bullish", trigger_df, entry_min, atr)
+        risk = entry - stop  # risk measured from worst fill
+
+        # ── TARGETS (from worst-fill entry) ───────────────────────
         tp1 = local_high - atr_tp1_buffer
-        # TP2 = local high plus ATR buffer (extension target)
         tp2 = local_high + atr_tp2_buffer
-
-        # Fallback: if local high is too close, use RR-based targets
         if tp1 <= entry:
             tp1 = entry + risk * 1.5
         if tp2 <= tp1:
             tp2 = entry + risk * 2.5
-        # Minimum separation — aggressive for small coins
-        # TP1 must be at least 2R from entry, TP2 at least 1.5R beyond TP1
         if (tp1 - entry) < risk * 2.0:
             tp1 = entry + risk * 2.0
         if (tp2 - tp1) < risk * 1.5:
             tp2 = tp1 + risk * 1.5
 
+        # ── MOVED GUARD at creation ───────────────────────────────
+        denom = tp1 - entry_max
+        progress = (px - entry_max) / denom if denom > 0 else 1.0
+
     else:
-        entry = base_level - retest_offset
-        stop = base_level + buffer
+        # ── ENTRY ZONE (bearish mirror) ───────────────────────────
+        entry_max = base_level
+        if reclaim_level is not None and float(reclaim_level) < base_level:
+            entry_min = max(float(reclaim_level), base_level - zone_depth * 2)
+        else:
+            entry_min = base_level - zone_depth
+        # worst fill for shorts = bottom of zone
+        entry = entry_min
+
+        # ── STOP: structural anchor above last 2 swing highs ─────
+        stop, stop_anchor = find_stop_level("bearish", trigger_df, entry_max, atr)
         risk = stop - entry
 
-        # TP1 = local low plus ATR buffer (conservative, high probability)
+        # ── TARGETS (from worst-fill entry) ───────────────────────
         tp1 = local_low + atr_tp1_buffer
-        # TP2 = local low minus ATR buffer (extension target)
         tp2 = local_low - atr_tp2_buffer
-
-        # Fallback: if local low is too close, use RR-based targets
         if tp1 >= entry:
             tp1 = entry - risk * 2.0
         if tp2 >= tp1:
             tp2 = entry - risk * 3.5
-        # Minimum separation — aggressive for small coins
         if (entry - tp1) < risk * 2.0:
             tp1 = entry - risk * 2.0
         if (tp1 - tp2) < risk * 1.5:
             tp2 = tp1 - risk * 1.5
 
+        denom = entry_min - tp1
+        progress = (entry_min - px) / denom if denom > 0 else 1.0
+
+    # progress < 0 means price is still inside/behind the zone → clamp to 0
+    progress = max(0.0, float(progress))
+    state = "MOVED" if progress > MOVED_PROGRESS_MAX else "OK"
+
     rr1, rr2 = calc_rr(direction, entry, stop, tp1, tp2)
 
     return {
+        # legacy fields (entry = worst-fill edge of zone)
         "entry": entry,
         "stop": stop,
         "tp1": tp1,
         "tp2": tp2,
         "rr_tp1": rr1,
         "rr_tp2": rr2,
+        # new fields
+        "entry_min": entry_min,
+        "entry_max": entry_max,
+        "state": state,                      # "OK" | "MOVED"
+        "progress_to_tp1": round(progress, 3),
+        "stop_anchor": stop_anchor,          # how the stop was derived
     }
 
 
@@ -1909,7 +2062,6 @@ def main_loop():
                         if (
                             plan["rr_tp2"] is not None
                             and plan["rr_tp2"] >= MIN_RR_TO_ALERT
-                            and trade_state == "ACTIONABLE"
                         ):
                             print(
                                 f"[DETECTED] {symbol} {sweep_dir} "
