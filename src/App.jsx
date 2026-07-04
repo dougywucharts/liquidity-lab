@@ -2664,12 +2664,12 @@ export default function AppPreBeta() {
       const et = parseEventDate(existing.events?.[0]?.timestampUtc).getTime();
       if (wt > et) byPair.set(key, wave);
     });
-    let result = Array.from(byPair.values()).slice(0, 10);
+    let result = Array.from(byPair.values());
     if (filterOffHours && isOffHours()) {
       result = result.filter((w) => MAJOR_PAIRS.includes(w.pair));
     }
-    return result;
-  }, [activeWaves]);
+    return result.slice(0, 10);
+  }, [activeWaves, filterOffHours]);
 
   const tickerItems = useMemo(() => bestTickerItems(waves, 10), [waves]);
 
@@ -3896,7 +3896,40 @@ export default function AppPreBeta() {
                 <div style={{ fontWeight: 900, fontSize: 14 }}>Radar Feed</div>
                 <div style={styles.subtext}>Waves · most recent first</div>
               </div>
-              <Pill>{visibleWaves.length} active</Pill>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFilterOffHours((p) => {
+                      const next = !p;
+                      try {
+                        localStorage.setItem("filterOffHours", String(next));
+                      } catch {}
+                      return next;
+                    });
+                  }}
+                  title="During off-hours (UTC 22–07), show only major pairs"
+                  style={{
+                    ...cardButtonReset,
+                    width: "auto",
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: 0.5,
+                    padding: "4px 9px",
+                    borderRadius: 8,
+                    border: `1px solid ${filterOffHours ? "rgba(246,196,83,0.4)" : palette.border}`,
+                    color: filterOffHours ? palette.gold : palette.textDim,
+                    background: filterOffHours
+                      ? "rgba(246,196,83,0.08)"
+                      : "transparent",
+                    whiteSpace: "nowrap",
+                    cursor: "pointer",
+                  }}
+                >
+                  {filterOffHours ? "★ MAJORS" : "ALL PAIRS"}
+                </button>
+                <Pill>{visibleWaves.length} active</Pill>
+              </div>
             </div>
             <div
               style={{
