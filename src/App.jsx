@@ -3045,11 +3045,13 @@ export default function AppPreBeta() {
     };
 
     let serverAi = {};
+    let serverLog = null;
     try {
       const response = await apiFetch("/logs", {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      serverLog = response?.log || null;
       serverAi =
         response?.aiAnalysis || response?.analysis || response?.ai || {};
       setCurrentUser((prev) => ({
@@ -3081,8 +3083,8 @@ export default function AppPreBeta() {
       selectedEvent?.rr2,
     );
     const baseEntry = {
-      id: `${Date.now()}_${Math.random()}`,
-      timestamp: new Date().toISOString(),
+      id: serverLog?.id || `${Date.now()}_${Math.random()}`,
+      timestamp: serverLog?.createdAt || new Date().toISOString(),
       pair: payload.pair,
       timeframe: payload.timeframe,
       session: payload.session,
