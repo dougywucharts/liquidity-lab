@@ -81,6 +81,10 @@ model TradeLog {
   aiSummary           String?
   aiCoachingNote      String?
   aiStatus            String?
+  aiVerdict           String?
+  aiComparison        String?
+  aiStrengths         Json?
+  aiMistakes          Json?
 
   tradeScore          Int?
   scoreNotes          String?
