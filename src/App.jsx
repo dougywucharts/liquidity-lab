@@ -5503,29 +5503,40 @@ export default function AppPreBeta() {
                         {(log.outcome === "Open" || !log.outcome) && (
                           <QuickClose
                             logId={log.id}
-                            onClose={(id, exit, outcome, pnl) => {
-                              setLoggedDecisions((prev) =>
-                                prev.map((d) =>
-                                  d.id === id
-                                    ? {
-                                        ...d,
-                                        exit,
-                                        outcome,
-                                        pnl,
-                                        realizedRR: calcRealizedRR(
-                                          d.directionBias,
-                                          d.entry,
-                                          d.stop,
-                                          exit,
-                                        ),
-                                      }
-                                    : d,
-                                ),
-                              );
-                              toast(
-                                `${log.pair} closed as ${outcome}`,
-                                "success",
-                              );
+                            onClose={async (id, exit, outcome, pnl) => {
+                              try {
+                                const data = await apiFetch(`/logs/${id}`, {
+                                  method: "PATCH",
+                                  body: JSON.stringify({ exit, outcome, pnl }),
+                                });
+                                const updated = data?.log;
+                                setLoggedDecisions((prev) =>
+                                  prev.map((d) =>
+                                    d.id === id
+                                      ? {
+                                          ...d,
+                                          exit: updated?.exit ?? exit,
+                                          outcome: updated?.outcome ?? outcome,
+                                          pnl: updated?.pnl ?? pnl,
+                                          realizedRR:
+                                            updated?.realizedRR ??
+                                            calcRealizedRR(
+                                              d.directionBias,
+                                              d.entry,
+                                              d.stop,
+                                              exit,
+                                            ),
+                                        }
+                                      : d,
+                                  ),
+                                );
+                                toast(
+                                  `${log.pair} closed as ${outcome}`,
+                                  "success",
+                                );
+                              } catch (err) {
+                                toast(`Close failed: ${err.message}`, "warn");
+                              }
                             }}
                           />
                         )}
