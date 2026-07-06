@@ -48,9 +48,15 @@ USE_PROD_RADAR = True
 # Must match SWEEP_SECRET_KEY in server .env
 SWEEP_SECRET_KEY = os.getenv("SWEEP_SECRET_KEY", "")
 
+# Comma-separated list of radar endpoints, env-driven so the same code
+# runs locally (localhost + prod) and on Render (prod only)
 BRIDGE_URLS = [
-    "http://localhost:5000/sweep",
-    "https://liquidity-lab-api.onrender.com/sweep",
+    u.strip()
+    for u in os.getenv(
+        "BRIDGE_URLS",
+        "http://localhost:5000/sweep,https://liquidity-lab-api.onrender.com/sweep",
+    ).split(",")
+    if u.strip()
 ]
 
 ENABLE_RADAR_POST = True
@@ -102,6 +108,24 @@ STOP_BUFFER_PCT = 0.0015
 TP1_BUFFER_PCT = 0.0005
 TP2_BUFFER_PCT = 0.0010
 MIN_RR_TO_ALERT = 1.5  # TP2 must be >= 1.5R to fire any alert
+
+# MOVED policy: "suppress" = don't post entry-type signals born past the
+# progress threshold; "tag" = post everything, tagged (frontend demotes)
+MOVED_POLICY = os.getenv("MOVED_POLICY", "suppress")
+
+
+def moved_should_skip(plan, event_type):
+    """
+    True if this signal should NOT be posted because price already ran.
+    Only entry-type events are suppressed; RECLAIM/CONFIRMED/ACCEPTED are
+    validation events and always post (tagged with planState).
+    """
+    if MOVED_POLICY != "suppress":
+        return False
+    if event_type not in ("SWEEP_DETECTED", "DOUBLE_SWEEP"):
+        return False
+    return plan.get("state") == "MOVED"
+
 
 # Cooldowns
 DETECTED_COOLDOWN = 240  # [FILTER 7] was 30
@@ -617,12 +641,12 @@ def calc_rr(direction, entry, stop, tp1, tp2):
 # (constants below can be moved to your config block later)
 # =========================================================
 
-ENTRY_ZONE_ATR_FRAC = 0.25      # zone depth as fraction of ATR
-SWING_PIVOT_WINDOW = 2          # bars each side for a pivot to count as a swing
-SWING_LOOKBACK_BARS = 60        # how far back to hunt for swing points (1m bars)
-STOP_ATR_PAD = 0.20             # ATR pad beyond the structural anchor
-MOVED_PROGRESS_MAX = 0.35       # >35% of the way to TP1 at creation = MOVED
-STOP_MAX_ATR_MULT = 3.0         # sanity cap: stop can't exceed 3x ATR from entry
+ENTRY_ZONE_ATR_FRAC = 0.25  # zone depth as fraction of ATR
+SWING_PIVOT_WINDOW = 2  # bars each side for a pivot to count as a swing
+SWING_LOOKBACK_BARS = 60  # how far back to hunt for swing points (1m bars)
+STOP_ATR_PAD = 0.20  # ATR pad beyond the structural anchor
+MOVED_PROGRESS_MAX = 0.35  # >35% of the way to TP1 at creation = MOVED
+STOP_MAX_ATR_MULT = 3.0  # sanity cap: stop can't exceed 3x ATR from entry
 
 
 def find_swing_points(df, window=SWING_PIVOT_WINDOW, lookback=SWING_LOOKBACK_BARS):
@@ -640,11 +664,18 @@ def find_swing_points(df, window=SWING_PIVOT_WINDOW, lookback=SWING_LOOKBACK_BAR
     swing_lows, swing_highs = [], []
     for i in range(window, n - window):
         lo, hi = lows[i], highs[i]
-        if lo == min(lows[i - window : i + window + 1]) and \
-           lo < min(min(lows[i - window : i]), min(lows[i + 1 : i + window + 1])) + 1e-12:
+        if (
+            lo == min(lows[i - window : i + window + 1])
+            and lo
+            < min(min(lows[i - window : i]), min(lows[i + 1 : i + window + 1])) + 1e-12
+        ):
             swing_lows.append(float(lo))
-        if hi == max(highs[i - window : i + window + 1]) and \
-           hi > max(max(highs[i - window : i]), max(highs[i + 1 : i + window + 1])) - 1e-12:
+        if (
+            hi == max(highs[i - window : i + window + 1])
+            and hi
+            > max(max(highs[i - window : i]), max(highs[i + 1 : i + window + 1]))
+            - 1e-12
+        ):
             swing_highs.append(float(hi))
     return swing_lows, swing_highs
 
@@ -664,7 +695,7 @@ def find_stop_level(direction, trigger_df, entry_ref, atr):
     if direction == "bullish":
         candidates = [lo for lo in swing_lows if lo < entry_ref]
         if len(candidates) >= 2:
-            anchor = min(candidates[-2:])          # lower of last two swing lows
+            anchor = min(candidates[-2:])  # lower of last two swing lows
             stop = anchor - pad
             label = "structure_2_lows"
         elif len(candidates) == 1:
@@ -685,7 +716,7 @@ def find_stop_level(direction, trigger_df, entry_ref, atr):
     else:  # bearish
         candidates = [hi for hi in swing_highs if hi > entry_ref]
         if len(candidates) >= 2:
-            anchor = max(candidates[-2:])          # higher of last two swing highs
+            anchor = max(candidates[-2:])  # higher of last two swing highs
             stop = anchor + pad
             label = "structure_2_highs"
         elif len(candidates) == 1:
@@ -797,9 +828,9 @@ def build_rr_plan(direction, trigger_df, map_levels, sweep_level, reclaim_level=
         # new fields
         "entry_min": entry_min,
         "entry_max": entry_max,
-        "state": state,                      # "OK" | "MOVED"
+        "state": state,  # "OK" | "MOVED"
         "progress_to_tp1": round(progress, 3),
-        "stop_anchor": stop_anchor,          # how the stop was derived
+        "stop_anchor": stop_anchor,  # how the stop was derived
     }
 
 
@@ -947,6 +978,33 @@ def detect_setup_sweep(setup_df, map_df):
     if liquidity_type in ("Equal Highs", "Equal Lows"):
         strength += 10
 
+    # EXHAUSTION SWEEP — sweeping while price is stretched >= 2 ATR beyond
+    # EMA99 in the sweep direction = mean-reversion fade with confluence.
+    # These are counter-trend BY DESIGN and get a bonus, not a penalty.
+    exhaustion = False
+    try:
+        if "ema99" in setup_df.columns:
+            ema99_val = float(setup_df["ema99"].iloc[-1])
+        else:
+            ema99_val = float(
+                setup_df["close"].ewm(span=99, adjust=False).mean().iloc[-1]
+            )
+        atr_val = setup_df["atr14"].iloc[-2]
+        if pd.notna(atr_val) and atr_val > 0:
+            # bearish sweep of highs: exhaustion = price stretched ABOVE ema99
+            # bullish sweep of lows:  exhaustion = price stretched BELOW ema99
+            ext_atr = (
+                (price - ema99_val) / atr_val
+                if bearish
+                else (ema99_val - price) / atr_val
+            )
+            if ext_atr >= 2.0:
+                exhaustion = True
+                strength += int(min(18, 10 + (ext_atr - 2.0) * 6))
+                liquidity_type = f"Exhaustion · {liquidity_type}"
+    except Exception:
+        pass
+
     strength = int(min(max(strength, 0), 100))
 
     # Gate 4: Minimum strength [FILTER 3]
@@ -957,10 +1015,14 @@ def detect_setup_sweep(setup_df, map_df):
     _, bias = compute_regime_and_bias(setup_df)
 
     if not is_aligned_with_bias(direction, bias):
-        if strength < COUNTER_TREND_MIN_STRENGTH:
+        if exhaustion:
+            # extension fades are counter-trend by design — no gate, no penalty
+            pass
+        elif strength < COUNTER_TREND_MIN_STRENGTH:
             return FAIL
-        # Counter-trend that passes: apply confidence penalty
-        strength = int(strength * 0.85)
+        else:
+            # Counter-trend that passes: apply confidence penalty
+            strength = int(strength * 0.85)
 
     # Gate 6: Off-hours filter [FILTER 9]
     ts = setup_df.index[-1]
@@ -1110,11 +1172,17 @@ def detect_confirmed_displacement(trigger_df, direction, entry_level):
 
 
 def compute_institutional_score(
-    strength, event_type, rr2=None, bias=None, session=None, liquidity_type=None
+    strength,
+    event_type,
+    rr2=None,
+    bias=None,
+    session=None,
+    liquidity_type=None,
+    progress=None,
 ):
     """
-    Upgraded: session timing and liquidity pool type now factor into score.
-    Uses a float internally then clamps at the end to preserve differentiation.
+    Session, liquidity pool type, and price progress factor into score.
+    A signal that already ran toward TP1 cannot wear a high score.
     """
     score = float(max(0, min(100, int(strength))))
 
@@ -1152,6 +1220,15 @@ def compute_institutional_score(
     # Named liquidity pool bonus
     if liquidity_type in ("Equal Highs", "Equal Lows"):
         score += 5
+
+    # PROGRESS PENALTY — price already moved toward TP1 = less edge remaining.
+    # <=15% progress: free. 95% progress: ~-48, capped at -40.
+    if progress is not None:
+        try:
+            p = float(progress)
+            score -= min(40.0, max(0.0, (p - 0.15) * 60.0))
+        except (TypeError, ValueError):
+            pass
 
     return max(0, min(100, int(score)))
 
@@ -1555,6 +1632,11 @@ def post_sweep_to_radar(
             "tp2": None if plan["tp2"] is None else float(plan["tp2"]),
             "rr1": None if plan["rr_tp1"] is None else float(plan["rr_tp1"]),
             "rr2": None if plan["rr_tp2"] is None else float(plan["rr_tp2"]),
+            "entry_min": plan.get("entry_min"),
+            "entry_max": plan.get("entry_max"),
+            "state": plan.get("state"),
+            "progress_to_tp1": plan.get("progress_to_tp1"),
+            "stop_anchor": plan.get("stop_anchor"),
             "chartCandles": _build_chart_candles(df),
         }
 
@@ -2016,39 +2098,45 @@ def main_loop():
                             plan["rr_tp2"] is not None
                             and plan["rr_tp2"] >= MIN_RR_TO_ALERT
                         ):
-                            print(
-                                f"[DOUBLE SWEEP] {symbol} {sweep_dir} strength={strength}"
-                            )
-                            send_double_sweep_alert(
-                                symbol,
-                                trigger_df,
-                                sweep_dir,
-                                strength,
-                                regime,
-                                bias,
-                                map_level,
-                                setup_level,
-                                liquidity_type,
-                                plan,
-                            )
-                            post_sweep_to_radar(
-                                symbol=symbol,
-                                event_type="DOUBLE_SWEEP",
-                                direction=sweep_dir,
-                                strength=strength,
-                                regime=regime,
-                                bias=bias,
-                                map_level=map_level,
-                                setup_level=setup_level,
-                                liquidity_type=liquidity_type,
-                                variant="double_sweep",
-                                plan=plan,
-                                df=trigger_df,
-                                ema_context="Double Sweep",
-                            )
-                            last_double[symbol] = now
-                            double_count += 1
-
+                            if moved_should_skip(plan, "DOUBLE_SWEEP"):
+                                print(
+                                    f"[MOVED SKIP] {symbol} DOUBLE_SWEEP "
+                                    f"progress={plan.get('progress_to_tp1')}"
+                                )
+                                last_double[symbol] = now
+                            else:
+                                print(
+                                    f"[DOUBLE SWEEP] {symbol} {sweep_dir} strength={strength}"
+                                )
+                                send_double_sweep_alert(
+                                    symbol,
+                                    trigger_df,
+                                    sweep_dir,
+                                    strength,
+                                    regime,
+                                    bias,
+                                    map_level,
+                                    setup_level,
+                                    liquidity_type,
+                                    plan,
+                                )
+                                post_sweep_to_radar(
+                                    symbol=symbol,
+                                    event_type="DOUBLE_SWEEP",
+                                    direction=sweep_dir,
+                                    strength=strength,
+                                    regime=regime,
+                                    bias=bias,
+                                    map_level=map_level,
+                                    setup_level=setup_level,
+                                    liquidity_type=liquidity_type,
+                                    variant="double_sweep",
+                                    plan=plan,
+                                    df=trigger_df,
+                                    ema_context="Double Sweep",
+                                )
+                                last_double[symbol] = now
+                                double_count += 1
                     # [FILTER 7] DETECTED: cooldown + level-reset guard
                     level_moved = (
                         symbol not in last_detected_level
@@ -2063,69 +2151,79 @@ def main_loop():
                             plan["rr_tp2"] is not None
                             and plan["rr_tp2"] >= MIN_RR_TO_ALERT
                         ):
-                            print(
-                                f"[DETECTED] {symbol} {sweep_dir} "
-                                f"strength={strength} variant={variant}"
-                            )
-                            send_detected_alert(
-                                symbol,
-                                trigger_df,
-                                sweep_dir,
-                                strength,
-                                variant,
-                                regime,
-                                bias,
-                                map_level,
-                                setup_level,
-                                liquidity_type,
-                                plan,
-                            )
-                            post_sweep_to_radar(
-                                symbol=symbol,
-                                event_type="SWEEP_DETECTED",
-                                direction=sweep_dir,
-                                strength=strength,
-                                regime=regime,
-                                bias=bias,
-                                map_level=map_level,
-                                setup_level=setup_level,
-                                liquidity_type=liquidity_type,
-                                variant=variant,
-                                plan=plan,
-                                df=trigger_df,
-                                ema_context="Setup Sweep Detected",
-                            )
+                            if moved_should_skip(plan, "SWEEP_DETECTED"):
+                                print(
+                                    f"[MOVED SKIP] {symbol} DETECTED "
+                                    f"progress={plan.get('progress_to_tp1')}"
+                                )
+                                last_detected[symbol] = now
+                                last_detected_level[symbol] = setup_level
+                            else:
+                                print(
+                                    f"[DETECTED] {symbol} {sweep_dir} "
+                                    f"strength={strength} variant={variant}"
+                                )
+                                send_detected_alert(
+                                    symbol,
+                                    trigger_df,
+                                    sweep_dir,
+                                    strength,
+                                    variant,
+                                    regime,
+                                    bias,
+                                    map_level,
+                                    setup_level,
+                                    liquidity_type,
+                                    plan,
+                                )
+                                post_sweep_to_radar(
+                                    symbol=symbol,
+                                    event_type="SWEEP_DETECTED",
+                                    direction=sweep_dir,
+                                    strength=strength,
+                                    regime=regime,
+                                    bias=bias,
+                                    map_level=map_level,
+                                    setup_level=setup_level,
+                                    liquidity_type=liquidity_type,
+                                    variant=variant,
+                                    plan=plan,
+                                    df=trigger_df,
+                                    ema_context="Setup Sweep Detected",
+                                )
 
-                            c = trigger_df.iloc[-1]
-                            vol_avg10 = trigger_df["volume"].rolling(10).mean().iloc[-2]
-                            log_sweep_event(
-                                symbol=symbol,
-                                event="DETECTED",
-                                direction=sweep_dir,
-                                strength=strength,
-                                price=c["close"],
-                                map_level=map_level,
-                                setup_level=setup_level,
-                                liquidity_type=liquidity_type,
-                                regime=regime,
-                                bias=bias,
-                                volume=c["volume"],
-                                vol_avg10=vol_avg10,
-                                range_abs=c["range_abs"],
-                                range_pct=c["range_pct"],
-                                atr14=c["atr14"],
-                                variant=variant,
-                                entry=plan["entry"],
-                                stop=plan["stop"],
-                                tp1=plan["tp1"],
-                                tp2=plan["tp2"],
-                                rr_tp1=plan["rr_tp1"],
-                                rr_tp2=plan["rr_tp2"],
-                                ts_utc=trigger_df.index[-1],
-                            )
-                            last_detected[symbol] = now
-                            last_detected_level[symbol] = setup_level
-                            det_count += 1
+                                c = trigger_df.iloc[-1]
+                                vol_avg10 = (
+                                    trigger_df["volume"].rolling(10).mean().iloc[-2]
+                                )
+                                log_sweep_event(
+                                    symbol=symbol,
+                                    event="DETECTED",
+                                    direction=sweep_dir,
+                                    strength=strength,
+                                    price=c["close"],
+                                    map_level=map_level,
+                                    setup_level=setup_level,
+                                    liquidity_type=liquidity_type,
+                                    regime=regime,
+                                    bias=bias,
+                                    volume=c["volume"],
+                                    vol_avg10=vol_avg10,
+                                    range_abs=c["range_abs"],
+                                    range_pct=c["range_pct"],
+                                    atr14=c["atr14"],
+                                    variant=variant,
+                                    entry=plan["entry"],
+                                    stop=plan["stop"],
+                                    tp1=plan["tp1"],
+                                    tp2=plan["tp2"],
+                                    rr_tp1=plan["rr_tp1"],
+                                    rr_tp2=plan["rr_tp2"],
+                                    ts_utc=trigger_df.index[-1],
+                                )
+                                last_detected[symbol] = now
+                                last_detected_level[symbol] = setup_level
+                                det_count += 1
 
                 # Trigger-level checks (reclaim / accepted / confirmed)
                 if symbol in last_sweep_meta:
@@ -2187,6 +2285,7 @@ def main_loop():
                                 bias,
                                 session=session,
                                 liquidity_type=liquidity_type,
+                                progress=plan.get("progress_to_tp1"),
                             )
                             print(
                                 f"[RECLAIM] {symbol} {direction} "
@@ -2262,6 +2361,7 @@ def main_loop():
                             bias,
                             session=session,
                             liquidity_type=liquidity_type,
+                            progress=plan.get("progress_to_tp1"),
                         )
                         print(f"[ACCEPTED] {symbol} {direction} strength={strength}")
                         send_accepted_alert(
@@ -2339,6 +2439,7 @@ def main_loop():
                                     bias,
                                     session=session,
                                     liquidity_type=liquidity_type,
+                                    progress=plan.get("progress_to_tp1"),
                                 )
                                 print(
                                     f"[CONFIRMED] {symbol} {direction} "

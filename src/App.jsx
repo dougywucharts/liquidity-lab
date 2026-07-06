@@ -451,7 +451,10 @@ function getSignalAgeMinutes(timestampUtc) {
   return Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
 }
 
-function getSignalState(timestampUtc) {
+function getSignalState(timestampUtc, tradeState) {
+  // Price already ran past the entry/TP zone — dead on arrival regardless
+  // of how fresh the timestamp is.
+  if (tradeState === "MOVED") return "EXPIRED";
   const age = getSignalAgeMinutes(timestampUtc);
   if (age <= 3) return "LIVE";
   if (age <= 10) return "AGING";
@@ -1219,7 +1222,7 @@ function InsightBox({ label, value, subtext, accent }) {
 
 function SignalInsightBar({ event, rr, risk }) {
   if (!event) return null;
-  const state = getSignalState(event.timestampUtc);
+  const state = getSignalState(event.timestampUtc, event.tradeState);
   const countdown = getSignalCountdown(event.timestampUtc);
   const stateColor =
     state === "LIVE"
@@ -2629,13 +2632,16 @@ export default function AppPreBeta() {
     return waves
       .map((wave) => {
         const freshEvents = (wave.events || []).filter(
-          (evt) => getSignalState(evt.timestampUtc) !== "EXPIRED",
+          (evt) => getSignalState(evt.timestampUtc, evt.tradeState) !== "EXPIRED",
         );
         if (!freshEvents.length) return null;
         return {
           ...wave,
           events: freshEvents,
-          state: getSignalState(freshEvents[0]?.timestampUtc),
+          state: getSignalState(
+            freshEvents[0]?.timestampUtc,
+            freshEvents[0]?.tradeState,
+          ),
         };
       })
       .filter(Boolean)
@@ -3944,7 +3950,10 @@ export default function AppPreBeta() {
                 visibleWaves.map((wave) => {
                   const tone = directionTone(wave.directionBias);
                   const conf = Math.round((wave.avgConfidence || 0) * 100);
-                  const state = getSignalState(wave.events?.[0]?.timestampUtc);
+                  const state = getSignalState(
+                    wave.events?.[0]?.timestampUtc,
+                    wave.events?.[0]?.tradeState,
+                  );
                   const stateColor =
                     state === "LIVE"
                       ? palette.long
