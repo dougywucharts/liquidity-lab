@@ -3867,8 +3867,6 @@ export default function AppPreBeta() {
             }}
             style={{
               ...styles.primaryButton,
-              fontSize: 12,
-              padding: "8px 14px",
               whiteSpace: "nowrap",
             }}
           >
