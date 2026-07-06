@@ -1759,53 +1759,6 @@ app.post('/logs', requireAuth, async (req, res) => {
       }
     }
 
-    // Update a log (QuickClose: exit / outcome / pnl)
-    app.patch('/logs/:id', requireAuth, async (req, res) => {
-      try {
-        const { id } = req.params
-        const existing = await prisma.tradeLog.findFirst({
-          where: { id, userId: req.user.id }
-        })
-        if (!existing) return res.status(404).json({ error: 'Log not found' })
-
-        const b = req.body || {}
-        const exitNum =
-          b.exit === null || b.exit === undefined || b.exit === ''
-            ? existing.exit
-            : parseNum(b.exit, 0)
-        const pnlNum =
-          b.pnl === null || b.pnl === undefined || b.pnl === ''
-            ? existing.pnl
-            : parseNum(b.pnl, 0)
-        const outcome = b.outcome || existing.outcome
-
-        // Recompute realized RR from stored entry/stop
-        let realizedRR = existing.realizedRR
-        const risk =
-          existing.entry != null && existing.stop != null
-            ? Math.abs(existing.entry - existing.stop)
-            : 0
-        if (risk > 0 && exitNum != null) {
-          realizedRR = String(existing.directionBias || '')
-            .toLowerCase()
-            .includes('long')
-            ? (exitNum - existing.entry) / risk
-            : (existing.entry - exitNum) / risk
-          if (!Number.isFinite(realizedRR)) realizedRR = null
-          else realizedRR = Number(realizedRR.toFixed(2))
-        }
-
-        const log = await prisma.tradeLog.update({
-          where: { id: existing.id },
-          data: { exit: exitNum, pnl: pnlNum, outcome, realizedRR }
-        })
-        return res.json({ ok: true, log })
-      } catch (err) {
-        console.error('Update log error:', err)
-        return res.status(500).json({ error: 'Failed to update log' })
-      }
-    })
-
     if (payload.screenshotUrl) {
       const usage = canUseScreenshot(req.user, 5)
       if (!usage.allowed)
@@ -1961,6 +1914,53 @@ app.post('/logs', requireAuth, async (req, res) => {
     return res
       .status(500)
       .json({ error: 'Failed to save log', details: err.message })
+  }
+})
+
+// Update a log (QuickClose: exit / outcome / pnl)
+app.patch('/logs/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params
+    const existing = await prisma.tradeLog.findFirst({
+      where: { id, userId: req.user.id }
+    })
+    if (!existing) return res.status(404).json({ error: 'Log not found' })
+
+    const b = req.body || {}
+    const exitNum =
+      b.exit === null || b.exit === undefined || b.exit === ''
+        ? existing.exit
+        : parseNum(b.exit, 0)
+    const pnlNum =
+      b.pnl === null || b.pnl === undefined || b.pnl === ''
+        ? existing.pnl
+        : parseNum(b.pnl, 0)
+    const outcome = b.outcome || existing.outcome
+
+    // Recompute realized RR from stored entry/stop
+    let realizedRR = existing.realizedRR
+    const risk =
+      existing.entry != null && existing.stop != null
+        ? Math.abs(existing.entry - existing.stop)
+        : 0
+    if (risk > 0 && exitNum != null) {
+      realizedRR = String(existing.directionBias || '')
+        .toLowerCase()
+        .includes('long')
+        ? (exitNum - existing.entry) / risk
+        : (existing.entry - exitNum) / risk
+      if (!Number.isFinite(realizedRR)) realizedRR = null
+      else realizedRR = Number(realizedRR.toFixed(2))
+    }
+
+    const log = await prisma.tradeLog.update({
+      where: { id: existing.id },
+      data: { exit: exitNum, pnl: pnlNum, outcome, realizedRR }
+    })
+    return res.json({ ok: true, log })
+  } catch (err) {
+    console.error('Update log error:', err)
+    return res.status(500).json({ error: 'Failed to update log' })
   }
 })
 
