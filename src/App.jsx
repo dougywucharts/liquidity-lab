@@ -451,10 +451,17 @@ function getSignalAgeMinutes(timestampUtc) {
   return Math.max(0, Math.floor((Date.now() - d.getTime()) / 60000));
 }
 
-function getSignalState(timestampUtc, tradeState) {
-  // Price already ran past the entry/TP zone — dead on arrival regardless
-  // of how fresh the timestamp is.
-  if (tradeState === "MOVED") return "EXPIRED";
+const ENTRY_EVENT_TYPES = ["SWEEP_DETECTED", "DOUBLE_SWEEP"];
+
+function getSignalState(timestampUtc, tradeState, eventType) {
+  // Entry-type signals (DETECTED/DOUBLE_SWEEP) that were already past the
+  // entry zone at birth are dead on arrival, regardless of timestamp age.
+  // RECLAIM/ACCEPTED/CONFIRMED are validation events that require price to
+  // have moved away from entry to fire at all, so tradeState === "MOVED" is
+  // normal for them, not staleness — don't auto-expire those.
+  if (tradeState === "MOVED" && ENTRY_EVENT_TYPES.includes(eventType)) {
+    return "EXPIRED";
+  }
   const age = getSignalAgeMinutes(timestampUtc);
   if (age <= 3) return "LIVE";
   if (age <= 10) return "AGING";
@@ -1222,7 +1229,11 @@ function InsightBox({ label, value, subtext, accent }) {
 
 function SignalInsightBar({ event, rr, risk }) {
   if (!event) return null;
-  const state = getSignalState(event.timestampUtc, event.tradeState);
+  const state = getSignalState(
+    event.timestampUtc,
+    event.tradeState,
+    event.eventType,
+  );
   const countdown = getSignalCountdown(event.timestampUtc);
   const stateColor =
     state === "LIVE"
@@ -2620,7 +2631,9 @@ export default function AppPreBeta() {
     return waves
       .map((wave) => {
         const freshEvents = (wave.events || []).filter(
-          (evt) => getSignalState(evt.timestampUtc, evt.tradeState) !== "EXPIRED",
+          (evt) =>
+            getSignalState(evt.timestampUtc, evt.tradeState, evt.eventType) !==
+            "EXPIRED",
         );
         if (!freshEvents.length) return null;
         return {
@@ -2629,6 +2642,7 @@ export default function AppPreBeta() {
           state: getSignalState(
             freshEvents[0]?.timestampUtc,
             freshEvents[0]?.tradeState,
+            freshEvents[0]?.eventType,
           ),
         };
       })
@@ -3944,6 +3958,7 @@ export default function AppPreBeta() {
                   const state = getSignalState(
                     wave.events?.[0]?.timestampUtc,
                     wave.events?.[0]?.tradeState,
+                    wave.events?.[0]?.eventType,
                   );
                   const stateColor =
                     state === "LIVE"
