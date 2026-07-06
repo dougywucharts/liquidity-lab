@@ -1973,13 +1973,10 @@ function QuickClose({ logId, onClose }) {
             setOpen(false);
           }}
           style={{
-            border: "none",
-            borderRadius: 10,
-            padding: "9px 14px",
+            ...styles.primaryButton,
             background: "linear-gradient(135deg,#22c55e,#16a34a)",
-            color: "#fff",
-            fontWeight: 900,
-            cursor: "pointer",
+            boxShadow: "0 10px 24px rgba(34,197,94,0.25)",
+            padding: "9px 14px",
             fontSize: 12,
           }}
         >
@@ -1988,16 +1985,7 @@ function QuickClose({ logId, onClose }) {
         <button
           type="button"
           onClick={() => setOpen(false)}
-          style={{
-            border: `1px solid ${palette.border}`,
-            borderRadius: 10,
-            padding: "9px 12px",
-            background: "rgba(255,255,255,0.04)",
-            color: palette.textSoft,
-            fontWeight: 800,
-            cursor: "pointer",
-            fontSize: 12,
-          }}
+          style={{ ...styles.button, padding: "9px 12px", fontSize: 12 }}
         >
           ✕
         </button>
@@ -3871,16 +3859,21 @@ export default function AppPreBeta() {
               </div>
             </div>
           </div>
-          <div
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab("vault");
+            }}
             style={{
+              ...styles.primaryButton,
               fontSize: 12,
-              color: "#f6c453",
-              fontWeight: 800,
+              padding: "8px 14px",
               whiteSpace: "nowrap",
             }}
           >
             Generate Profile →
-          </div>
+          </button>
         </div>
 
         <BriefingPanel />
