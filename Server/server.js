@@ -842,11 +842,18 @@ function resolveBillingPlanFromPriceId (priceId) {
     process.env.STRIPE_PRICE_PRO_YEARLY,
     process.env.PRICE_PRO_YEARLY
   ].filter(Boolean)
+  const founderIds = [process.env.STRIPE_PRICE_FOUNDER].filter(Boolean)
   if (starterIds.includes(normalized)) return 'starter'
   if (coreIds.includes(normalized)) return 'core'
   if (proIds.includes(normalized)) return 'pro'
   if (yearlyIds.includes(normalized)) return 'pro'
+  if (founderIds.includes(normalized)) return 'pro'
   return 'starter'
+}
+
+function isFounderPriceId (priceId) {
+  const founderId = process.env.STRIPE_PRICE_FOUNDER
+  return Boolean(founderId) && String(priceId || '') === founderId
 }
 
 function resolveCheckoutPriceId (plan) {
@@ -868,9 +875,16 @@ function resolveCheckoutPriceId (plan) {
       process.env.STRIPE_PRICE_PRO ||
       process.env.PRICE_PRO ||
       process.env.PRICE_PRO_MONTHLY ||
-      ''
+      '',
+    founder: process.env.STRIPE_PRICE_FOUNDER || ''
   }
   return map[normalized] || ''
+}
+
+function isValidFounderPromoCode (code) {
+  const configured = process.env.PROMO_CODE_FOUNDER
+  if (!configured || !code) return false
+  return String(code).trim().toLowerCase() === configured.trim().toLowerCase()
 }
 
 async function getLatestActiveSubscriptionForCustomer (customerId) {
@@ -1276,7 +1290,8 @@ app.post('/login', async (req, res) => {
         email: user.email,
         billingPlan: user.billingPlan || 'starter',
         stripeStatus: user.stripeStatus || '',
-        stripeCustomerId: user.stripeCustomerId || ''
+        stripeCustomerId: user.stripeCustomerId || '',
+        founderMember: user.founderMember || false
       }
     })
   } catch (err) {
@@ -1316,6 +1331,7 @@ app.get('/me', requireAuth, async (req, res) => {
         stripeStatus: user.stripeStatus || 'inactive',
         stripeCustomerId: user.stripeCustomerId || '',
         isBetaUser: user.isBetaUser,
+        founderMember: user.founderMember || false,
         screenshotRemaining,
         aiRemaining: hasProAccess
           ? Math.max(0, AI_REVIEW_DAILY_LIMIT - (user.aiReviewCount || 0))
@@ -1987,10 +2003,38 @@ app.post('/bug-report', async (req, res) => {
 })
 
 // ---------------- STRIPE ----------------
+app.post('/promo/validate', requireAuth, async (req, res) => {
+  const code = String(req.body.code || '')
+  if (!isValidFounderPromoCode(code)) {
+    return res.status(400).json({ valid: false, error: 'Invalid promo code' })
+  }
+  return res.json({
+    valid: true,
+    plan: 'founder',
+    label: 'Founder — $40.83/mo, locked in for life or until you cancel'
+  })
+})
+
 app.post('/stripe/create-checkout-session', requireAuth, async (req, res) => {
   try {
     if (!stripe) return res.status(500).json({ error: 'Stripe not configured' })
-    const plan = String(req.body.plan || 'pro').toLowerCase()
+    let plan = String(req.body.plan || 'pro').toLowerCase()
+    const promoCode = req.body.promoCode ? String(req.body.promoCode) : ''
+
+    let usingFounderPromo = false
+    if (promoCode) {
+      if (!isValidFounderPromoCode(promoCode)) {
+        return res.status(400).json({ error: 'Invalid promo code' })
+      }
+      if (plan !== 'pro' && plan !== 'founder') {
+        return res
+          .status(400)
+          .json({ error: 'Founder promo only applies to the Pro plan' })
+      }
+      plan = 'founder'
+      usingFounderPromo = true
+    }
+
     const priceId = resolveCheckoutPriceId(plan)
     if (!priceId)
       return res.status(400).json({ error: 'Missing Stripe price ID', plan })
@@ -2021,7 +2065,11 @@ app.post('/stripe/create-checkout-session', requireAuth, async (req, res) => {
       allow_promotion_codes: true,
       billing_address_collection: 'auto',
       client_reference_id: req.user.id,
-      metadata: { userId: req.user.id, plan }
+      metadata: {
+        userId: req.user.id,
+        plan,
+        promoCode: usingFounderPromo ? promoCode : ''
+      }
     })
     return res.json({ url: session.url })
   } catch (err) {
@@ -2082,6 +2130,7 @@ app.post('/stripe/sync', requireAuth, async (req, res) => {
         stripePriceId: priceId,
         stripeStatus: activeLike.status || req.user.stripeStatus || 'free',
         billingPlan: resolveBillingPlanFromPriceId(priceId),
+        founderMember: isFounderPriceId(priceId),
         billingPeriodEnd: activeLike.current_period_end
           ? new Date(activeLike.current_period_end * 1000)
           : null,
@@ -2149,6 +2198,7 @@ app.post('/stripe/webhook', async (req, res) => {
         const sub = await stripe.subscriptions.retrieve(subId)
         const priceId = sub.items?.data?.[0]?.price?.id || null
         const billingPlan = resolveBillingPlanFromPriceId(priceId)
+        const founderMember = isFounderPriceId(priceId)
 
         // Find user by customerId or userId
         const whereClause = userId
@@ -2163,6 +2213,10 @@ app.post('/stripe/webhook', async (req, res) => {
             stripePriceId: priceId,
             stripeStatus: sub.status,
             billingPlan,
+            founderMember,
+            promoCodeUsed: founderMember
+              ? session.metadata?.promoCode || 'founder'
+              : undefined,
             isActive: ['active', 'trialing'].includes(sub.status),
             billingPeriodEnd: sub.current_period_end
               ? new Date(sub.current_period_end * 1000)
@@ -2186,6 +2240,7 @@ app.post('/stripe/webhook', async (req, res) => {
         const customerId = sub.customer
         const priceId = sub.items?.data?.[0]?.price?.id || null
         const billingPlan = resolveBillingPlanFromPriceId(priceId)
+        const founderMember = isFounderPriceId(priceId)
 
         await prisma.user.updateMany({
           where: { stripeCustomerId: String(customerId) },
@@ -2194,6 +2249,7 @@ app.post('/stripe/webhook', async (req, res) => {
             stripePriceId: priceId,
             stripeStatus: sub.status,
             billingPlan,
+            founderMember,
             isActive: ['active', 'trialing'].includes(sub.status),
             billingPeriodEnd: sub.current_period_end
               ? new Date(sub.current_period_end * 1000)
@@ -2222,6 +2278,7 @@ app.post('/stripe/webhook', async (req, res) => {
           data: {
             stripeStatus: 'canceled',
             billingPlan: 'starter',
+            founderMember: false,
             isActive: false
           }
         })

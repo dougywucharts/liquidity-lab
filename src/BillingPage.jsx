@@ -89,6 +89,10 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
   const [syncBusy, setSyncBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [promoCode, setPromoCode] = useState("");
+  const [promoStatus, setPromoStatus] = useState("idle"); // idle | checking | valid | invalid
+  const [promoLabel, setPromoLabel] = useState("");
+  const [promoBusy, setPromoBusy] = useState(false);
 
   const active = isActiveStatus(billing?.stripeStatus);
   const currentPlan = billing?.billingPlan || "starter";
@@ -127,7 +131,11 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
   async function startCheckout(plan) {
     try {
       setBusyPlan(plan); setError("");
-      const data = await apiFetch("/stripe/create-checkout-session", { method:"POST", body:JSON.stringify({ plan }) }, token);
+      const body = { plan };
+      if (plan === "pro" && promoStatus === "valid" && promoCode) {
+        body.promoCode = promoCode;
+      }
+      const data = await apiFetch("/stripe/create-checkout-session", { method:"POST", body:JSON.stringify(body) }, token);
       if (data?.portalUrl) { window.location.href = data.portalUrl; return; }
       if (data?.url) window.location.href = data.url;
     } catch (err) {
@@ -135,6 +143,24 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
       setError(err.message || "Checkout failed");
     } finally {
       setBusyPlan("");
+    }
+  }
+
+  async function applyPromoCode() {
+    if (!promoCode.trim()) return;
+    try {
+      setPromoBusy(true); setPromoStatus("idle");
+      const data = await apiFetch("/promo/validate", { method:"POST", body:JSON.stringify({ code: promoCode.trim() }) }, token);
+      if (data?.valid) {
+        setPromoStatus("valid");
+        setPromoLabel(data.label || "Promo applied");
+      } else {
+        setPromoStatus("invalid");
+      }
+    } catch {
+      setPromoStatus("invalid");
+    } finally {
+      setPromoBusy(false);
     }
   }
 
@@ -208,7 +234,13 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
         <div style={s.statusGrid}>
           <div style={s.statusCard}>
             <div style={s.label}>Current Plan</div>
-            <div style={s.bigValue}>{currentPlan.toUpperCase()}</div>
+            <div style={s.bigValue}>
+              {currentPlan.toUpperCase()}
+              {billing?.founderMember ? " 🏆" : ""}
+            </div>
+            {billing?.founderMember && (
+              <div style={{ ...s.smallText, color: "#f6c453" }}>Founding Member</div>
+            )}
             <div style={s.smallText}>Stripe: {fmtStatus(billing?.stripeStatus)}</div>
           </div>
           <div style={s.statusCard}>
@@ -260,11 +292,17 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
           {plans.map(plan => {
             const isCurrent = currentPlan === plan.key;
             const isBusy = busyPlan === plan.key;
+            const founderApplied = plan.key === "pro" && promoStatus === "valid";
             return (
               <div key={plan.key} style={{ ...s.planCard, ...(plan.highlight ? s.highlightCard : {}), ...(isCurrent ? s.currentPlanCard : {}) }}>
                 {plan.highlight && (
                   <div style={s.popularBadgeWrap}>
                     <span style={s.popularBadge}>⭐ Most Popular</span>
+                  </div>
+                )}
+                {founderApplied && (
+                  <div style={s.popularBadgeWrap}>
+                    <span style={{ ...s.popularBadge, background:"#f6c453", color:"#1a1200" }}>🏆 Founder rate applied</span>
                   </div>
                 )}
                 <div style={s.planTop}>
@@ -274,8 +312,8 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
                     <p style={s.planBlurb}>{plan.blurb}</p>
                   </div>
                   <div style={s.priceWrap}>
-                    <span style={s.price}>{plan.price}</span>
-                    {plan.sub && <span style={s.sub}>{plan.sub}</span>}
+                    <span style={s.price}>{founderApplied ? "$40.83" : plan.price}</span>
+                    {plan.sub && <span style={s.sub}>{founderApplied ? "/mo for life" : plan.sub}</span>}
                   </div>
                 </div>
                 <div style={s.featuresList}>
@@ -291,9 +329,9 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
                     Free — No card required
                   </div>
                 ) : (
-                  <button style={{ ...s.primaryButton, ...(isCurrent ? s.currentButton : {}), ...(plan.highlight && !isCurrent ? s.highlightButton : {}) }}
+                  <button style={{ ...s.primaryButton, ...(isCurrent ? s.currentButton : {}), ...(plan.highlight && !isCurrent ? s.highlightButton : {}), ...(founderApplied ? { background:"linear-gradient(135deg,#f6c453,#c9922f)", boxShadow:"0 10px 24px rgba(246,196,83,0.3)" } : {}) }}
                     disabled={isBusy || isCurrent} onClick={() => startCheckout(plan.key)}>
-                    {isCurrent ? "✓ Current Plan" : isBusy ? "Redirecting…" : `Start ${plan.name}`}
+                    {isCurrent ? "✓ Current Plan" : isBusy ? "Redirecting…" : founderApplied ? "Start Founder Pro →" : `Start ${plan.name}`}
                   </button>
                 )}
               </div>
@@ -312,6 +350,36 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
             Get Annual Pro →
           </button>
         </div>
+
+        {!billing?.founderMember && (
+          <div style={s.annualBanner}>
+            <div>
+              <div style={{ fontWeight:900, fontSize:15, marginBottom:4 }}>🏆 Have a Founder code?</div>
+              <div style={{ color: promoStatus === "valid" ? "#f6c453" : "rgba(255,255,255,0.6)", fontSize:13 }}>
+                {promoStatus === "valid"
+                  ? `${promoLabel} — click "Start Founder Pro" on the Pro card above.`
+                  : "Direct-invite customers get Pro at the annual rate, billed monthly, for life."}
+              </div>
+              {promoStatus === "invalid" && (
+                <div style={{ color:"#f87171", fontSize:12, marginTop:4 }}>Invalid code</div>
+              )}
+            </div>
+            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+              <input
+                value={promoCode}
+                onChange={e => { setPromoCode(e.target.value); setPromoStatus("idle"); }}
+                onKeyDown={e => { if (e.key === "Enter") applyPromoCode(); }}
+                placeholder="Promo code"
+                disabled={promoStatus === "valid"}
+                style={s.promoInput}
+              />
+              <button style={{ ...s.secondaryButton, opacity: promoBusy || promoStatus === "valid" ? 0.55 : 1 }}
+                disabled={promoBusy || promoStatus === "valid"} onClick={applyPromoCode}>
+                {promoBusy ? "Checking…" : promoStatus === "valid" ? "Applied ✓" : "Apply"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {!compact && (
           <div style={s.footerPanel}>
@@ -362,6 +430,7 @@ const s = {
   locked: { marginTop:8, color:"#fb7185", fontSize:16, fontWeight:900 },
   portalRow: { display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, marginTop:16, padding:14, borderRadius:18, background:"rgba(255,255,255,0.035)", border:"1px solid rgba(255,255,255,0.08)", flexWrap:"wrap" },
   secondaryButton: { border:"1px solid rgba(255,255,255,0.14)", background:"rgba(15,23,42,0.9)", color:"#fff", borderRadius:14, padding:"11px 16px", fontWeight:900, cursor:"pointer" },
+  promoInput: { border:"1px solid rgba(246,196,83,0.3)", background:"rgba(15,23,42,0.9)", color:"#fff", borderRadius:14, padding:"11px 14px", fontWeight:700, fontSize:13, width:160 },
   customerText: { color:"rgba(255,255,255,0.45)", fontSize:12, fontWeight:700 },
   plansGrid: { display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:14, marginTop:18 },
   planCard: { border:"1px solid rgba(255,255,255,0.09)", background:"linear-gradient(180deg,rgba(15,23,42,0.90),rgba(3,7,18,0.88))", borderRadius:24, padding:18, boxShadow:"0 14px 38px rgba(0,0,0,0.38)", position:"relative" },

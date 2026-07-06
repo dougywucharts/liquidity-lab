@@ -21,6 +21,8 @@ model User {
   billingStatus      String?
   billingPlan        String?      // starter, core, pro
   billingPeriodEnd   DateTime?
+  founderMember      Boolean      @default(false)
+  promoCodeUsed      String?
   isActive           Boolean      @default(false)
   isBetaUser         Boolean      @default(false)
   betaGrantedAt      DateTime?
