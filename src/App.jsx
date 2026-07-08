@@ -3751,6 +3751,7 @@ export default function AppPreBeta() {
                 label: "Signal Quality",
                 action: () => setActiveTab("stats"),
                 active: activeTab === "stats",
+                badge: "IN PROGRESS",
               },
             ].map((item) => (
               <button
@@ -3771,6 +3772,9 @@ export default function AppPreBeta() {
                   fontWeight: item.active ? 800 : 600,
                   padding: "0 14px",
                   height: "100%",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
                   borderBottom: item.active
                     ? `2px solid ${item.gold ? "#f6c453" : palette.accent}`
                     : "2px solid transparent",
@@ -3779,6 +3783,22 @@ export default function AppPreBeta() {
                 }}
               >
                 {item.label}
+                {item.badge && (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      fontWeight: 900,
+                      letterSpacing: 0.5,
+                      color: "#f6c453",
+                      background: "rgba(246,196,83,0.14)",
+                      border: "1px solid rgba(246,196,83,0.3)",
+                      borderRadius: 999,
+                      padding: "2px 6px",
+                    }}
+                  >
+                    {item.badge}
+                  </span>
+                )}
               </button>
             ))}
           </div>
