@@ -2444,6 +2444,14 @@ export default function AppPreBeta() {
     if (!getStoredToken()) {
       setIsAuthenticated(false);
       setActiveTab("login");
+      return;
+    }
+    // Deep-link support: this is a single-page app with no real routes, but
+    // Stripe's success/cancel redirect and the welcome email both link to
+    // /billing. Vercel now rewrites any path to index.html, so land here
+    // and open the right tab instead of just showing the dashboard.
+    if (window.location.pathname.startsWith("/billing")) {
+      setActiveTab("billing");
     }
   }, []);
 
