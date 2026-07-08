@@ -1479,6 +1479,20 @@ app.post('/ai-review', requireAuth, async (req, res) => {
       return res.status(503).json({ error: 'AI review is not enabled' })
     }
 
+    // Plan gate — AI review is Core/Pro/Beta only. The frontend hides the
+    // button for starter users, but that's not enforcement; without this
+    // check any authenticated user could call the endpoint directly.
+    const hasProAccess =
+      req.user.billingPlan === 'pro' ||
+      req.user.billingPlan === 'pro_beta' ||
+      req.user.billingPlan === 'core'
+    if (!hasProAccess) {
+      return res.status(403).json({
+        error: 'AI review requires a Core or Pro plan',
+        message: 'Upgrade to Core or Pro to unlock AI trade reviews.'
+      })
+    }
+
     // Global IP rate limit — stops account farming abuse
     const ip =
       req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
