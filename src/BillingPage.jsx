@@ -207,8 +207,26 @@ export default function BillingPage({ token = "", compact = false, onBack, onSig
           <div style={s.header}>
             <div>
               <div style={s.kicker}>RED OCTOBER SYSTEMS</div>
-              <h1 style={s.title}>Liquidity Lab Pricing</h1>
-              <p style={s.muted}>Pick a plan — create your free account to get started.</p>
+              <h1 style={s.title}>Liquidity Lab</h1>
+              <p style={s.muted}>Live liquidity radar, an AI-powered trade journal, and coaching that learns your patterns — not just another signals feed.</p>
+            </div>
+          </div>
+
+          <div style={s.pillarGrid}>
+            <div style={s.pillarCard}>
+              <div style={s.pillarIcon}>📡</div>
+              <div style={s.pillarTitle}>Live radar</div>
+              <div style={s.pillarText}>Sweep, reclaim, and confirmation alerts across 45+ pairs, scored in real time.</div>
+            </div>
+            <div style={s.pillarCard}>
+              <div style={s.pillarIcon}>🤖</div>
+              <div style={s.pillarTitle}>AI trade journal</div>
+              <div style={s.pillarText}>Log a trade and get an instant AI review — what was good, what to fix, graded.</div>
+            </div>
+            <div style={s.pillarCard}>
+              <div style={s.pillarIcon}>🧬</div>
+              <div style={s.pillarTitle}>Trader DNA™ coaching</div>
+              <div style={s.pillarText}>Claude builds a running profile of your habits from every logged trade and coaches you on it.</div>
             </div>
           </div>
 
@@ -472,6 +490,11 @@ const s = {
   errorBox: { marginTop:16, border:"1px solid rgba(248,113,113,0.30)", background:"rgba(127,29,29,0.25)", color:"#fecaca", borderRadius:16, padding:14, fontWeight:800 },
   successBox: { marginTop:16, border:"1px solid rgba(74,222,128,0.30)", background:"rgba(20,70,38,0.25)", color:"#bbf7d0", borderRadius:16, padding:14, fontWeight:800 },
   statusGrid: { display:"grid", gridTemplateColumns:"repeat(4,minmax(0,1fr))", gap:12, marginTop:18 },
+  pillarGrid: { display:"grid", gridTemplateColumns:"repeat(3,minmax(0,1fr))", gap:14, marginTop:22 },
+  pillarCard: { border:"1px solid rgba(255,255,255,0.09)", background:"linear-gradient(180deg,rgba(15,23,42,0.90),rgba(3,7,18,0.88))", borderRadius:20, padding:20 },
+  pillarIcon: { fontSize:26, marginBottom:10 },
+  pillarTitle: { fontSize:16, fontWeight:900, marginBottom:6 },
+  pillarText: { fontSize:13, color:"rgba(255,255,255,0.6)", lineHeight:1.5 },
   statusCard: { border:"1px solid rgba(255,255,255,0.08)", background:"linear-gradient(180deg,rgba(15,23,42,0.86),rgba(2,6,23,0.78))", borderRadius:20, padding:16, minHeight:110 },
   label: { fontSize:10, fontWeight:900, letterSpacing:1.4, textTransform:"uppercase", color:"rgba(255,255,255,0.42)" },
   bigValue: { marginTop:10, fontSize:23, fontWeight:900 },
