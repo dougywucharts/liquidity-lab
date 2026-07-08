@@ -81,7 +81,7 @@ function fmtStatus(status) {
   return String(status).replaceAll("_", " ");
 }
 
-export default function BillingPage({ token = "", compact = false, onBack }) {
+export default function BillingPage({ token = "", compact = false, onBack, onSignIn }) {
   const [billing, setBilling] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busyPlan, setBusyPlan] = useState("");
@@ -201,9 +201,64 @@ export default function BillingPage({ token = "", compact = false, onBack }) {
   if (!token) {
     return (
       <div style={s.page}>
+        <div style={s.glowA} />
+        <div style={s.glowB} />
         <div style={s.shell}>
-          <h1 style={s.title}>Sign in required</h1>
-          <p style={s.muted}>Log in to manage your Liquidity Lab plan.</p>
+          <div style={s.header}>
+            <div>
+              <div style={s.kicker}>RED OCTOBER SYSTEMS</div>
+              <h1 style={s.title}>Liquidity Lab Pricing</h1>
+              <p style={s.muted}>Pick a plan — create your free account to get started.</p>
+            </div>
+          </div>
+
+          <div style={s.plansGrid}>
+            {plans.map(plan => (
+              <div key={plan.key} style={{ ...s.planCard, ...(plan.highlight ? s.highlightCard : {}) }}>
+                {plan.highlight && (
+                  <div style={s.popularBadgeWrap}>
+                    <span style={s.popularBadge}>⭐ Most Popular</span>
+                  </div>
+                )}
+                <div style={s.planTop}>
+                  <div>
+                    <div style={s.planBadge}>{plan.badge}</div>
+                    <h2 style={s.planName}>{plan.name}</h2>
+                    <p style={s.planBlurb}>{plan.blurb}</p>
+                  </div>
+                  <div style={s.priceWrap}>
+                    <span style={s.price}>{plan.price}</span>
+                    {plan.sub && <span style={s.sub}>{plan.sub}</span>}
+                  </div>
+                </div>
+                <div style={s.featuresList}>
+                  {plan.features.map(feature => (
+                    <div key={feature} style={s.planFeature}>
+                      <span style={{ color: feature.includes("🧬") ? "#f6c453" : "#fb7185", marginRight:8, fontSize:9 }}>●</span>
+                      {feature}
+                    </div>
+                  ))}
+                </div>
+                <button
+                  style={{ ...s.primaryButton, ...(plan.highlight ? s.highlightButton : {}) }}
+                  onClick={onSignIn || onBack}
+                >
+                  {plan.key === "starter" ? "Create Free Account" : `Sign Up for ${plan.name}`}
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {!compact && (
+            <div style={s.footerPanel}>
+              <div style={s.footerTitle}>How plans work</div>
+              <div style={s.footerGrid}>
+                <div><b>Starter</b><p>Free forever. Live radar + manual journal. No AI, no vault.</p></div>
+                <div><b>Core $29</b><p>AI reviews, Members Vault (Pattern Library + Psychology), screenshot logging.</p></div>
+                <div><b>Pro $59</b><p>Everything in Core plus unlimited AI, Trader DNA™, Analytics, and all future vault features.</p></div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );

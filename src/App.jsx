@@ -3219,6 +3219,18 @@ export default function AppPreBeta() {
     ? loggedDecisions
     : loggedDecisions.slice(0, 5);
 
+  if (!isAuthenticated && window.location.pathname.startsWith("/billing")) {
+    return (
+      <div style={styles.app}>
+        <BillingPage
+          token=""
+          compact={false}
+          onSignIn={() => setActiveTab("login")}
+        />
+      </div>
+    );
+  }
+
   if (!isAuthenticated) {
     return (
       <div
