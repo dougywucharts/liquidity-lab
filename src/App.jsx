@@ -3,6 +3,7 @@ import "./styles.css";
 import { createChart, CandlestickSeries, LineSeries } from "lightweight-charts";
 import BillingPage from "./BillingPage.jsx";
 import MembersVault from "./MembersVault.jsx";
+import LandingPage from "./LandingPage.jsx";
 
 // ─── Mobile responsive styles injected globally ──────────────────────────────
 const mobileCSS = `
@@ -2427,6 +2428,14 @@ export default function AppPreBeta() {
       return "login";
     }
   });
+  const [showLanding, setShowLanding] = useState(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return !params.get("register") && !params.get("login");
+    } catch {
+      return true;
+    }
+  });
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [propAccount, setPropAccount] = useState({
@@ -3228,6 +3237,21 @@ export default function AppPreBeta() {
           onSignIn={() => setActiveTab("login")}
         />
       </div>
+    );
+  }
+
+  if (!isAuthenticated && showLanding) {
+    return (
+      <LandingPage
+        onSignIn={() => {
+          setAuthTab("login");
+          setShowLanding(false);
+        }}
+        onGetStarted={() => {
+          setAuthTab("register");
+          setShowLanding(false);
+        }}
+      />
     );
   }
 

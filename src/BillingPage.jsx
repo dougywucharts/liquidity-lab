@@ -1,64 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { plans } from "./plansData.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || "http://localhost:5000";
-
-const plans = [
-  {
-    key: "starter",
-    name: "Starter",
-    price: "Free",
-    sub: "",
-    badge: "Free",
-    blurb: "Core radar and journaling for early traders.",
-    features: [
-      "Live radar feed",
-      "Manual journal",
-      "50 log entries",
-      "No AI reviews",
-      "Members Vault locked",
-    ],
-    highlight: false,
-  },
-  {
-    key: "core",
-    name: "Core",
-    price: "$29",
-    sub: "/mo",
-    badge: "Popular",
-    blurb: "AI reviews, Members Vault, and screenshot logging.",
-    features: [
-      "Everything in Starter",
-      "15 AI reviews / day",
-      "Screenshot uploads",
-      "Members Vault access",
-      "Pattern Library",
-      "Psychology Vault",
-      "500 log entries",
-    ],
-    highlight: false,
-  },
-  {
-    key: "pro",
-    name: "Pro",
-    price: "$59",
-    sub: "/mo",
-    badge: "Full Access",
-    blurb: "Unlimited AI, Trader DNA™, and advanced analytics.",
-    features: [
-      "Everything in Core",
-      "Unlimited AI reviews",
-      "🧬 Trader DNA™ (Claude-powered)",
-      "Advanced Analytics",
-      "Playbook Builder",
-      "Hall of Fame / Shame",
-      "Prop Firm Vault",
-      "AI coaching chat",
-      "Export logs",
-      "Priority support",
-    ],
-    highlight: true,
-  },
-];
 
 async function apiFetch(path, options = {}, token = "") {
   const headers = {
