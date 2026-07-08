@@ -1124,6 +1124,7 @@ app.post('/sweep', async (req, res) => {
     const { chartCandles, ...payloadForDb } = saved
     await prisma.radarEvent.create({
       data: {
+        id: saved.id,
         pair: saved.pair || '',
         timeframe: saved.timeframe || null,
         eventType: saved.eventType || null,
@@ -1144,19 +1145,9 @@ app.post('/sweep', async (req, res) => {
         payload: payloadForDb
       }
     })
-
-    // Trim old DB records — keep last 500
-    const count = await prisma.radarEvent.count()
-    if (count > 500) {
-      const oldest = await prisma.radarEvent.findMany({
-        orderBy: { createdAt: 'asc' },
-        take: count - 500,
-        select: { id: true }
-      })
-      await prisma.radarEvent.deleteMany({
-        where: { id: { in: oldest.map(r => r.id) } }
-      })
-    }
+    // No DB trim here — outcome-tracking stats need full history. The
+    // in-memory `events` array below (capped at MAX_EVENTS) is what keeps
+    // the live radar feed light; the DB is the permanent record.
   } catch (err) {
     console.error('[RADAR] Failed to persist event:', err.message)
     // Don't fail the request — memory store still works
@@ -1166,6 +1157,105 @@ app.post('/sweep', async (req, res) => {
   if (events.length > MAX_EVENTS) events.pop()
   console.log('[SWEEP RECEIVED]', saved.pair, saved.eventType || 'UNKNOWN')
   res.json({ ok: true, event: saved })
+})
+
+const VALID_OUTCOMES = ['TP1_HIT', 'TP2_HIT', 'STOPPED', 'EXPIRED']
+
+// Bot reports how a signal resolved (or that it expired unresolved) once
+// price hits stop/TP or the tracking window runs out. Same auth as /sweep.
+app.patch('/sweep/:id/outcome', async (req, res) => {
+  const sweepKey = req.headers['x-sweep-key'] || ''
+  const validSweepKey = process.env.SWEEP_SECRET_KEY || ''
+  if (validSweepKey && sweepKey !== validSweepKey) {
+    return res.status(401).json({ error: 'Unauthorized — invalid sweep key' })
+  }
+
+  const { id } = req.params
+  const { outcome, outcomePrice } = req.body || {}
+  if (!VALID_OUTCOMES.includes(outcome)) {
+    return res.status(400).json({ error: 'Invalid outcome', outcome })
+  }
+
+  try {
+    const updated = await prisma.radarEvent.update({
+      where: { id },
+      data: {
+        outcome,
+        outcomeAt: new Date(),
+        outcomePrice: outcomePrice != null ? Number(outcomePrice) : null
+      }
+    })
+
+    // Keep the in-memory feed in sync too, so GET /events reflects it
+    // immediately instead of waiting for the next server restart's reload.
+    const cached = events.find(e => e.id === id)
+    if (cached) {
+      cached.outcome = outcome
+      cached.outcomeAt = updated.outcomeAt
+      cached.outcomePrice = updated.outcomePrice
+    }
+
+    console.log('[OUTCOME]', id, outcome)
+    return res.json({ ok: true })
+  } catch (err) {
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: 'Event not found' })
+    }
+    console.error('[OUTCOME ERROR]', err.message)
+    return res.status(500).json({ error: 'Failed to record outcome' })
+  }
+})
+
+// Aggregate signal-quality stats — hit rate broken down by event type,
+// pattern, and pair, so filter thresholds can be tuned against real outcomes
+// instead of guesswork.
+app.get('/sweep/stats', async (req, res) => {
+  try {
+    const rows = await prisma.radarEvent.findMany({
+      where: { outcome: { not: 'PENDING' } },
+      select: { eventType: true, pattern: true, pair: true, outcome: true }
+    })
+
+    function summarize(rows) {
+      const total = rows.length
+      const wins = rows.filter(
+        r => r.outcome === 'TP1_HIT' || r.outcome === 'TP2_HIT'
+      ).length
+      const stopped = rows.filter(r => r.outcome === 'STOPPED').length
+      const expired = rows.filter(r => r.outcome === 'EXPIRED').length
+      const resolved = wins + stopped
+      return {
+        total,
+        wins,
+        stopped,
+        expired,
+        winRate: resolved > 0 ? Number(((wins / resolved) * 100).toFixed(1)) : null
+      }
+    }
+
+    function groupBy(rows, key) {
+      const groups = {}
+      for (const r of rows) {
+        const k = r[key] || 'Unknown'
+        if (!groups[k]) groups[k] = []
+        groups[k].push(r)
+      }
+      return Object.fromEntries(
+        Object.entries(groups).map(([k, v]) => [k, summarize(v)])
+      )
+    }
+
+    return res.json({
+      ok: true,
+      overall: summarize(rows),
+      byEventType: groupBy(rows, 'eventType'),
+      byPattern: groupBy(rows, 'pattern'),
+      byPair: groupBy(rows, 'pair')
+    })
+  } catch (err) {
+    console.error('[STATS ERROR]', err.message)
+    return res.status(500).json({ error: 'Failed to compute stats' })
+  }
 })
 
 // ---------------- AUTH ----------------

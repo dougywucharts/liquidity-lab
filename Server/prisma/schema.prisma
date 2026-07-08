@@ -143,10 +143,16 @@ model RadarEvent {
   tradeState    String?
   pattern       String?
 
+  // Outcome tracking — set by the bot once price resolves the signal
+  outcome       String?  @default("PENDING") // PENDING | TP1_HIT | TP2_HIT | STOPPED | EXPIRED
+  outcomeAt     DateTime?
+  outcomePrice  Float?
+
   // Full payload stored as JSON for future use (analytics, AI archive)
   payload       Json
 
   @@index([createdAt])
   @@index([pair, createdAt])
   @@index([eventType, createdAt])
+  @@index([outcome])
 }

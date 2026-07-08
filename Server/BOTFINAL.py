@@ -146,6 +146,11 @@ DOUBLE_SWEEP_DIR_REQUIRED = True
 CHART_WINDOW = (
     300  # 5 hours on 1m — matches trigger lookback so sweep origin is always visible
 )
+
+# Outcome tracking — how long a signal stays "pending" before it's marked
+# EXPIRED with no resolution. These are 1m-timeframe signals with modest R
+# multiples; if neither stop nor TP1 landed in this window it's stale data.
+OUTCOME_TRACK_MAX_HOURS = 8
 # =========================================================
 # DEBUG / MONITORING
 # =========================================================
@@ -1645,6 +1650,7 @@ def post_sweep_to_radar(
             "X-Sweep-Key": SWEEP_SECRET_KEY,
         }
 
+        posted_ok = False
         for url in BRIDGE_URLS:
             try:
                 resp = requests.post(
@@ -1658,11 +1664,114 @@ def post_sweep_to_radar(
                     print(f"[RADAR WARN] {url} -> {resp.status_code} {resp.text}")
                 else:
                     print(f"[RADAR OK] {url} -> {payload['pair']} {event_type}")
+                    posted_ok = True
             except Exception as e:
                 print(f"[RADAR ERROR] {url}: {e}")
 
+        if not posted_ok or plan.get("entry") is None or plan.get("stop") is None:
+            return None
+
+        return {
+            "id": payload["id"],
+            "direction": direction,
+            "entry": float(plan["entry"]),
+            "stop": float(plan["stop"]),
+            "tp1": None if plan.get("tp1") is None else float(plan["tp1"]),
+            "tp2": None if plan.get("tp2") is None else float(plan["tp2"]),
+            "created_at": df.index[-1],
+        }
+
     except Exception as e:
         print(f"[RADAR ERROR] {symbol} {event_type}: {e}")
+        return None
+
+
+# =========================================================
+# OUTCOME TRACKING
+# =========================================================
+
+
+def post_outcome_update(event_id, outcome, price):
+    headers = {
+        "Content-Type": "application/json",
+        "X-Sweep-Key": SWEEP_SECRET_KEY,
+    }
+    body = {"outcome": outcome, "outcomePrice": None if price is None else float(price)}
+    for url in BRIDGE_URLS:
+        outcome_url = url.rsplit("/sweep", 1)[0] + f"/sweep/{event_id}/outcome"
+        try:
+            resp = requests.patch(
+                outcome_url, json=body, headers=headers, timeout=BRIDGE_TIMEOUT
+            )
+        except Exception as e:
+            print(f"[OUTCOME ERROR] {outcome_url}: {e}")
+            continue
+        if resp.status_code >= 300:
+            print(f"[OUTCOME WARN] {outcome_url} -> {resp.status_code} {resp.text}")
+        else:
+            print(f"[OUTCOME OK] {event_id} -> {outcome}")
+
+
+def check_pending_outcomes(pending_outcomes, symbol, trigger_df):
+    """
+    For every signal still pending on this symbol, check whether price has
+    since hit stop, TP1, or TP2 — whichever comes first, chronologically.
+    If both a TP and the stop are touched within the same candle, the stop
+    is assumed to have hit first (standard conservative backtesting
+    convention — OHLC data can't tell us the true intrabar order).
+    Anything unresolved past OUTCOME_TRACK_MAX_HOURS is marked EXPIRED.
+    """
+    symbol_pending = pending_outcomes.get(symbol)
+    if not symbol_pending:
+        return
+
+    now_ts = trigger_df.index[-1]
+    resolved_ids = []
+
+    for event_id, sig in symbol_pending.items():
+        candles = trigger_df[trigger_df.index > sig["created_at"]]
+        outcome = None
+        price = None
+
+        for _, c in candles.iterrows():
+            if sig["direction"] == "bullish":
+                stop_hit = c["low"] <= sig["stop"]
+                tp1_hit = sig["tp1"] is not None and c["high"] >= sig["tp1"]
+                tp2_hit = sig["tp2"] is not None and c["high"] >= sig["tp2"]
+            else:
+                stop_hit = c["high"] >= sig["stop"]
+                tp1_hit = sig["tp1"] is not None and c["low"] <= sig["tp1"]
+                tp2_hit = sig["tp2"] is not None and c["low"] <= sig["tp2"]
+
+            if stop_hit:
+                outcome, price = "STOPPED", sig["stop"]
+                break
+            elif tp2_hit:
+                outcome, price = "TP2_HIT", sig["tp2"]
+                break
+            elif tp1_hit:
+                outcome, price = "TP1_HIT", sig["tp1"]
+                break
+
+        if outcome is None:
+            age_hours = (now_ts - sig["created_at"]).total_seconds() / 3600
+            if age_hours >= OUTCOME_TRACK_MAX_HOURS:
+                outcome, price = "EXPIRED", None
+
+        if outcome is not None:
+            post_outcome_update(event_id, outcome, price)
+            resolved_ids.append(event_id)
+
+    for event_id in resolved_ids:
+        del symbol_pending[event_id]
+    if not symbol_pending:
+        pending_outcomes.pop(symbol, None)
+
+
+def register_pending_outcome(pending_outcomes, symbol, tracked):
+    if not tracked:
+        return
+    pending_outcomes.setdefault(symbol, {})[tracked["id"]] = tracked
 
 
 def post_keepalive_ping(symbol, df, regime, bias):
@@ -1949,6 +2058,7 @@ def main_loop():
 
     last_sweep_meta = {}
     trigger_bar_state = {}
+    pending_outcomes = {}  # {symbol: {event_id: {direction, entry, stop, tp1, tp2, created_at}}}
     cycle_num = 0
 
     while True:
@@ -1999,6 +2109,8 @@ def main_loop():
                 map_df = add_indicators(map_df)
                 setup_df = add_indicators(setup_df)
                 trigger_df = add_indicators(trigger_df)
+
+                check_pending_outcomes(pending_outcomes, symbol, trigger_df)
 
                 regime, bias = compute_regime_and_bias(setup_df)
 
@@ -2121,7 +2233,7 @@ def main_loop():
                                     liquidity_type,
                                     plan,
                                 )
-                                post_sweep_to_radar(
+                                tracked = post_sweep_to_radar(
                                     symbol=symbol,
                                     event_type="DOUBLE_SWEEP",
                                     direction=sweep_dir,
@@ -2135,6 +2247,9 @@ def main_loop():
                                     plan=plan,
                                     df=trigger_df,
                                     ema_context="Double Sweep",
+                                )
+                                register_pending_outcome(
+                                    pending_outcomes, symbol, tracked
                                 )
                                 last_double[symbol] = now
                                 double_count += 1
@@ -2177,7 +2292,7 @@ def main_loop():
                                     liquidity_type,
                                     plan,
                                 )
-                                post_sweep_to_radar(
+                                tracked = post_sweep_to_radar(
                                     symbol=symbol,
                                     event_type="SWEEP_DETECTED",
                                     direction=sweep_dir,
@@ -2191,6 +2306,9 @@ def main_loop():
                                     plan=plan,
                                     df=trigger_df,
                                     ema_context="Setup Sweep Detected",
+                                )
+                                register_pending_outcome(
+                                    pending_outcomes, symbol, tracked
                                 )
 
                                 c = trigger_df.iloc[-1]
@@ -2306,7 +2424,7 @@ def main_loop():
                                 liquidity_type,
                                 plan,
                             )
-                            post_sweep_to_radar(
+                            tracked = post_sweep_to_radar(
                                 symbol=symbol,
                                 event_type="SWEEP_RECLAIM",
                                 direction=direction,
@@ -2321,6 +2439,7 @@ def main_loop():
                                 df=trigger_df,
                                 ema_context="Sweep Reclaim",
                             )
+                            register_pending_outcome(pending_outcomes, symbol, tracked)
 
                             c = trigger_df.iloc[-1]
                             vol_avg10 = trigger_df["volume"].rolling(10).mean().iloc[-2]
@@ -2378,7 +2497,7 @@ def main_loop():
                             liquidity_type,
                             plan,
                         )
-                        post_sweep_to_radar(
+                        tracked = post_sweep_to_radar(
                             symbol=symbol,
                             event_type="SWEEP_ACCEPTED",
                             direction=direction,
@@ -2393,6 +2512,7 @@ def main_loop():
                             df=trigger_df,
                             ema_context="Sweep Accepted",
                         )
+                        register_pending_outcome(pending_outcomes, symbol, tracked)
 
                         c = trigger_df.iloc[-1]
                         vol_avg10 = trigger_df["volume"].rolling(10).mean().iloc[-2]
@@ -2471,7 +2591,7 @@ def main_loop():
                                     liquidity_type,
                                     plan,
                                 )
-                                post_sweep_to_radar(
+                                tracked = post_sweep_to_radar(
                                     symbol=symbol,
                                     event_type="SWEEP_CONFIRMED",
                                     direction=direction,
@@ -2485,6 +2605,9 @@ def main_loop():
                                     plan=plan,
                                     df=trigger_df,
                                     ema_context="Sweep Confirmed",
+                                )
+                                register_pending_outcome(
+                                    pending_outcomes, symbol, tracked
                                 )
 
                                 c = trigger_df.iloc[-1]
