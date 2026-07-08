@@ -1943,6 +1943,7 @@ def main_loop():
     last_reclaim = {}
     last_accepted = {}
     last_confirmed = {}
+    last_confirmed_level = {}  # one CONFIRMED per sweep, not per cooldown window
     last_double = {}
     last_ping = {}
 
@@ -2427,7 +2428,19 @@ def main_loop():
                         trigger_df, direction, plan["entry"]
                     ):
                         dbg("   [CONFIRM CHECK] True")
-                        if now - last_confirmed.get(symbol, 0) > CONFIRMED_COOLDOWN:
+                        # One CONFIRMED per sweep: once fired for this setup_level,
+                        # displacement staying true every cycle shouldn't keep
+                        # re-posting the same (increasingly stale) entry/stop/tp.
+                        confirmed_level_is_new = (
+                            symbol not in last_confirmed_level
+                            or abs(setup_level - last_confirmed_level[symbol])
+                            / (setup_level + 1e-9)
+                            > 0.002
+                        )
+                        if (
+                            confirmed_level_is_new
+                            and now - last_confirmed.get(symbol, 0) > CONFIRMED_COOLDOWN
+                        ):
                             if (
                                 plan["rr_tp2"] is not None
                                 and plan["rr_tp2"] >= MIN_RR_TO_ALERT
@@ -2504,6 +2517,7 @@ def main_loop():
                                     ts_utc=trigger_df.index[-1],
                                 )
                                 last_confirmed[symbol] = now
+                                last_confirmed_level[symbol] = setup_level
                                 confirmed_count += 1
                     else:
                         dbg("   [CONFIRM CHECK] False")
