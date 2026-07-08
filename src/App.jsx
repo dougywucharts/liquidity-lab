@@ -4,6 +4,7 @@ import { createChart, CandlestickSeries, LineSeries } from "lightweight-charts";
 import BillingPage from "./BillingPage.jsx";
 import MembersVault from "./MembersVault.jsx";
 import LandingPage from "./LandingPage.jsx";
+import SignalStats from "./SignalStats.jsx";
 
 // ─── Mobile responsive styles injected globally ──────────────────────────────
 const mobileCSS = `
@@ -3630,6 +3631,14 @@ export default function AppPreBeta() {
     );
   }
 
+  if (activeTab === "stats") {
+    return (
+      <div style={styles.app}>
+        <SignalStats onBack={() => setActiveTab("dashboard")} />
+      </div>
+    );
+  }
+
   return (
     <div style={styles.app}>
       <MobileStyles />
@@ -3737,6 +3746,11 @@ export default function AppPreBeta() {
                 label: "Billing",
                 action: () => setActiveTab("billing"),
                 active: activeTab === "billing",
+              },
+              {
+                label: "Signal Quality",
+                action: () => setActiveTab("stats"),
+                active: activeTab === "stats",
               },
             ].map((item) => (
               <button
