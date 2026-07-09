@@ -9,12 +9,20 @@ function winRateColor(rate) {
   return "#fb7185";
 }
 
-function BreakdownTable({ title, data, minSample = 5 }) {
-  const rows = Object.entries(data || {}).sort((a, b) => {
-    const ar = a[1].winRate ?? -1;
-    const br = b[1].winRate ?? -1;
-    return br - ar;
-  });
+function avgRColor(avgR) {
+  if (avgR == null) return "rgba(255,255,255,0.4)";
+  if (avgR > 0) return "#4ade80";
+  if (avgR < 0) return "#fb7185";
+  return "#f6c453";
+}
+
+const CONFIDENCE_ORDER = ["90-100%", "80-89%", "70-79%", "60-69%", "50-59%", "Below 50%"];
+
+function BreakdownTable({ title, data, minSample = 5, order }) {
+  const entries = Object.entries(data || {});
+  const rows = order
+    ? order.filter((k) => data?.[k]).map((k) => [k, data[k]])
+    : entries.sort((a, b) => (b[1].winRate ?? -1) - (a[1].winRate ?? -1));
 
   return (
     <div style={s.card}>
@@ -29,6 +37,7 @@ function BreakdownTable({ title, data, minSample = 5 }) {
             <div style={s.colNum}>Wins</div>
             <div style={s.colNum}>Stopped</div>
             <div style={s.colNum}>Win rate</div>
+            <div style={s.colNum}>Avg R</div>
           </div>
           {rows.map(([name, stat]) => (
             <div key={name} style={s.row}>
@@ -43,6 +52,9 @@ function BreakdownTable({ title, data, minSample = 5 }) {
                     low n
                   </span>
                 )}
+              </div>
+              <div style={{ ...s.colNum, fontWeight: 900, color: avgRColor(stat.avgR) }}>
+                {stat.avgR == null ? "—" : `${stat.avgR > 0 ? "+" : ""}${stat.avgR}R`}
               </div>
             </div>
           ))}
@@ -130,12 +142,24 @@ export default function SignalStats({ onBack }) {
             <div style={s.bigValue}>{overall?.expired ?? "—"}</div>
             <div style={s.smallText}>No resolution within 8h</div>
           </div>
+          <div style={s.statusCard}>
+            <div style={s.label}>Avg R (expectancy)</div>
+            <div style={{ ...s.bigValue, color: avgRColor(overall?.avgR) }}>
+              {overall?.avgR == null ? "—" : `${overall.avgR > 0 ? "+" : ""}${overall.avgR}R`}
+            </div>
+            <div style={s.smallText}>Per signal, wins + stops</div>
+          </div>
         </div>
 
         <div style={s.breakdownGrid}>
           <BreakdownTable title="By event type" data={stats?.byEventType} />
           <BreakdownTable title="By pattern" data={stats?.byPattern} />
           <BreakdownTable title="By pair" data={stats?.byPair} />
+          <BreakdownTable
+            title="By confidence score"
+            data={stats?.byConfidence}
+            order={CONFIDENCE_ORDER}
+          />
         </div>
 
         {loading && !stats && <div style={s.loading}>Loading signal stats…</div>}
@@ -154,18 +178,18 @@ const s = {
   secondaryButton: { border: "1px solid rgba(255,255,255,0.14)", background: "rgba(15,23,42,0.9)", color: "#fff", borderRadius: 12, padding: "9px 14px", fontWeight: 800, cursor: "pointer", fontSize: 13, height: 38 },
   errorBox: { background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12, padding: 12, marginBottom: 16, fontSize: 13, color: "#fca5a5" },
 
-  statusGrid: { display: "grid", gridTemplateColumns: "repeat(5,minmax(0,1fr))", gap: 12, marginBottom: 24 },
+  statusGrid: { display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 12, marginBottom: 24 },
   statusCard: { border: "1px solid rgba(255,255,255,0.08)", background: "linear-gradient(180deg,rgba(15,23,42,0.86),rgba(2,6,23,0.78))", borderRadius: 20, padding: 16, minHeight: 100 },
   label: { fontSize: 10, fontWeight: 900, letterSpacing: 1.2, textTransform: "uppercase", color: "rgba(255,255,255,0.42)" },
   bigValue: { marginTop: 10, fontSize: 22, fontWeight: 900 },
   smallText: { marginTop: 8, fontSize: 11, color: "rgba(255,255,255,0.46)", fontWeight: 700 },
 
-  breakdownGrid: { display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 16 },
+  breakdownGrid: { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 16 },
   card: { border: "1px solid rgba(255,255,255,0.09)", background: "linear-gradient(180deg,rgba(15,23,42,0.90),rgba(3,7,18,0.88))", borderRadius: 20, padding: 18 },
   cardTitle: { fontSize: 14, fontWeight: 900, marginBottom: 14 },
   empty: { fontSize: 12, color: "rgba(255,255,255,0.4)" },
   table: { display: "grid", gap: 2 },
-  row: { display: "grid", gridTemplateColumns: "1.6fr 0.7fr 0.7fr 0.8fr 1fr", gap: 6, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" },
+  row: { display: "grid", gridTemplateColumns: "1.4fr 0.6fr 0.6fr 0.7fr 0.9fr 0.8fr", gap: 6, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.05)", alignItems: "center" },
   rowHeader: { fontSize: 10, fontWeight: 900, letterSpacing: 0.6, textTransform: "uppercase", color: "rgba(255,255,255,0.4)", borderBottom: "1px solid rgba(255,255,255,0.1)" },
   colName: { fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   colNum: { fontSize: 12, textAlign: "right" },

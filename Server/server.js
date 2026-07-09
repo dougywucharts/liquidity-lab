@@ -1213,8 +1213,44 @@ app.get('/sweep/stats', async (req, res) => {
   try {
     const rows = await prisma.radarEvent.findMany({
       where: { outcome: { not: 'PENDING' } },
-      select: { eventType: true, pattern: true, pair: true, outcome: true }
+      select: {
+        eventType: true,
+        pattern: true,
+        pair: true,
+        outcome: true,
+        botConfidence: true,
+        entry: true,
+        stop: true,
+        outcomePrice: true
+      }
     })
+
+    // R-multiple realized on this signal: -1R on a stop (by definition), or
+    // the actual reward/risk ratio on a win. Null if entry/stop are missing
+    // or degenerate (risk <= 0) - can't compute a multiple without a
+    // meaningful risk denominator.
+    function realizedR (r) {
+      if (r.outcome === 'STOPPED') return -1
+      if (r.outcome !== 'TP1_HIT' && r.outcome !== 'TP2_HIT') return null
+      if (r.entry == null || r.stop == null || r.outcomePrice == null) return null
+      const risk = Math.abs(r.entry - r.stop)
+      if (risk <= 0) return null
+      return Math.abs(r.outcomePrice - r.entry) / risk
+    }
+
+    const CONFIDENCE_BUCKETS = [
+      { label: '90-100%', min: 0.9, max: 1.01 },
+      { label: '80-89%', min: 0.8, max: 0.9 },
+      { label: '70-79%', min: 0.7, max: 0.8 },
+      { label: '60-69%', min: 0.6, max: 0.7 },
+      { label: '50-59%', min: 0.5, max: 0.6 },
+      { label: 'Below 50%', min: -1, max: 0.5 }
+    ]
+    function bucketConfidence (conf) {
+      if (conf == null) return 'Unknown'
+      const bucket = CONFIDENCE_BUCKETS.find(b => conf >= b.min && conf < b.max)
+      return bucket ? bucket.label : 'Unknown'
+    }
 
     function summarize(rows) {
       const total = rows.length
@@ -1224,19 +1260,30 @@ app.get('/sweep/stats', async (req, res) => {
       const stopped = rows.filter(r => r.outcome === 'STOPPED').length
       const expired = rows.filter(r => r.outcome === 'EXPIRED').length
       const resolved = wins + stopped
+
+      const rMultiples = rows.map(realizedR).filter(r => r != null)
+      const avgR =
+        rMultiples.length > 0
+          ? Number(
+              (rMultiples.reduce((a, b) => a + b, 0) / rMultiples.length).toFixed(2)
+            )
+          : null
+
       return {
         total,
         wins,
         stopped,
         expired,
-        winRate: resolved > 0 ? Number(((wins / resolved) * 100).toFixed(1)) : null
+        winRate: resolved > 0 ? Number(((wins / resolved) * 100).toFixed(1)) : null,
+        avgR
       }
     }
 
-    function groupBy(rows, key) {
+    function groupBy(rows, keyFn) {
+      const getKey = typeof keyFn === 'function' ? keyFn : r => r[keyFn]
       const groups = {}
       for (const r of rows) {
-        const k = r[key] || 'Unknown'
+        const k = getKey(r) || 'Unknown'
         if (!groups[k]) groups[k] = []
         groups[k].push(r)
       }
@@ -1250,7 +1297,8 @@ app.get('/sweep/stats', async (req, res) => {
       overall: summarize(rows),
       byEventType: groupBy(rows, 'eventType'),
       byPattern: groupBy(rows, 'pattern'),
-      byPair: groupBy(rows, 'pair')
+      byPair: groupBy(rows, 'pair'),
+      byConfidence: groupBy(rows, r => bucketConfidence(r.botConfidence))
     })
   } catch (err) {
     console.error('[STATS ERROR]', err.message)
