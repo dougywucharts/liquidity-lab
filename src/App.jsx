@@ -1288,6 +1288,71 @@ function SignalInsightBar({ event, rr, risk }) {
   );
 }
 
+// ─── MobileDecisionContext ────────────────────────────────────────────────────
+// Desktop shows this info in the right-hand Decision Context panel, which is
+// hidden on mobile (.llab-right-panel { display: none }) to make room for a
+// single-column layout. This is the mobile replacement — same read-only
+// signal info (Pair/Confidence/Setup Strength/Pattern/State), condensed.
+// Prop Challenge settings stay desktop-only.
+function MobileDecisionContext({ event }) {
+  if (!event) return null;
+  const confidencePct = Math.round((event.botConfidence || 0) * 100);
+  return (
+    <div className="llab-mobile-context" style={styles.mobileContext}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontWeight: 900, fontSize: 15 }}>{event.pair || "—"}</div>
+        <Pill tone={directionTone(event.directionBias)}>
+          {event.directionBias || "—"}
+        </Pill>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        <MiniBox label="Confidence" value={`${confidencePct}%`} subtext={event.sweepType || "—"} />
+        <MiniBox
+          label="State"
+          value={event.tradeState || getSignalState(event.timestampUtc) || "—"}
+        />
+      </div>
+      <div>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 10,
+            color: palette.textDim,
+            marginBottom: 6,
+            textTransform: "uppercase",
+            letterSpacing: 0.8,
+            fontWeight: 800,
+          }}
+        >
+          <span>Setup Strength</span>
+          <span>{confidencePct}%</span>
+        </div>
+        <div style={{ height: 6, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden" }}>
+          <div
+            style={{
+              width: `${Math.max(4, confidencePct)}%`,
+              height: "100%",
+              borderRadius: 999,
+              background:
+                confidencePct >= 70
+                  ? "linear-gradient(90deg,#22c55e,#86efac)"
+                  : confidencePct >= 45
+                    ? "linear-gradient(90deg,#f59e0b,#fde68a)"
+                    : "linear-gradient(90deg,#fb7185,#fecdd3)",
+            }}
+          />
+        </div>
+      </div>
+      <MiniBox
+        label="Pattern"
+        value={event.pattern || event.sweepType || "—"}
+        subtext={event.structure || ""}
+      />
+    </div>
+  );
+}
+
 // ─── AiReviewPanel ───────────────────────────────────────────────────────────
 
 function AiReviewPanel({ entry, liveReview, loading, locked }) {
@@ -2114,6 +2179,16 @@ const styles = {
     borderBottom: `1px solid ${palette.borderSoft}`,
   },
   panelBody: { padding: 12, display: "grid", gap: 10 },
+  mobileContext: {
+    flexDirection: "column",
+    gap: 10,
+    padding: 12,
+    borderRadius: 20,
+    border: `1px solid ${palette.border}`,
+    background:
+      "linear-gradient(180deg,rgba(14,20,32,0.97),rgba(9,13,23,0.97))",
+    boxShadow: "0 0 0 1px rgba(255,255,255,0.03),0 12px 28px rgba(0,0,0,0.3)",
+  },
   subtext: { fontSize: 12, color: palette.textSoft, marginTop: 2 },
   radarList: {
     display: "grid",
@@ -4462,6 +4537,9 @@ export default function AppPreBeta() {
                 risk={decisionRiskAmount}
               />
             )}
+
+            {/* Mobile-only Decision Context summary (right panel is hidden below 768px) */}
+            <MobileDecisionContext event={selectedEvent} />
           </div>
 
           {/* RIGHT: Decision Context */}
