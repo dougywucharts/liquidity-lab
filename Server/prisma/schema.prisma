@@ -148,6 +148,12 @@ model RadarEvent {
   outcomeAt     DateTime?
   outcomePrice  Float?
 
+  // Shadow signals: would have posted but got suppressed (confidence floor,
+  // disabled event type). Tracked for outcome the same as real signals, but
+  // never shown in the live feed - lets us prove a filter earns its keep
+  // with real counterfactual data instead of assuming.
+  shadow        Boolean  @default(false)
+
   // Full payload stored as JSON for future use (analytics, AI archive)
   payload       Json
 
@@ -155,4 +161,5 @@ model RadarEvent {
   @@index([pair, createdAt])
   @@index([eventType, createdAt])
   @@index([outcome])
+  @@index([shadow])
 }

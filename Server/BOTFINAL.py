@@ -1564,6 +1564,7 @@ def post_sweep_to_radar(
     plan,
     df,
     ema_context=None,
+    shadow=False,
 ):
     if not ENABLE_RADAR_POST:
         return
@@ -1654,6 +1655,7 @@ def post_sweep_to_radar(
             "state": plan.get("state"),
             "progress_to_tp1": plan.get("progress_to_tp1"),
             "stop_anchor": plan.get("stop_anchor"),
+            "shadow": shadow,
             "chartCandles": _build_chart_candles(df),
         }
 
@@ -1675,7 +1677,8 @@ def post_sweep_to_radar(
                 elif resp.status_code >= 300:
                     print(f"[RADAR WARN] {url} -> {resp.status_code} {resp.text}")
                 else:
-                    print(f"[RADAR OK] {url} -> {payload['pair']} {event_type}")
+                    shadow_tag = " (shadow)" if shadow else ""
+                    print(f"[RADAR OK] {url} -> {payload['pair']} {event_type}{shadow_tag}")
                     posted_ok = True
             except Exception as e:
                 print(f"[RADAR ERROR] {url}: {e}")
@@ -2216,13 +2219,12 @@ def main_loop():
                     }
 
                     # Double sweep
-                    if DOUBLE_SWEEP_ENABLED and variant == "double_sweep" and (
+                    if variant == "double_sweep" and (
                         now - last_double.get(symbol, 0) > DOUBLE_SWEEP_COOLDOWN
                     ):
                         if (
                             plan["rr_tp2"] is not None
                             and plan["rr_tp2"] >= MIN_RR_TO_ALERT
-                            and strength >= MIN_CONFIDENCE_TO_POST
                         ):
                             if moved_should_skip(plan, "DOUBLE_SWEEP"):
                                 print(
@@ -2231,21 +2233,31 @@ def main_loop():
                                 )
                                 last_double[symbol] = now
                             else:
-                                print(
-                                    f"[DOUBLE SWEEP] {symbol} {sweep_dir} strength={strength}"
+                                is_shadow = (
+                                    not DOUBLE_SWEEP_ENABLED
+                                    or strength < MIN_CONFIDENCE_TO_POST
                                 )
-                                send_double_sweep_alert(
-                                    symbol,
-                                    trigger_df,
-                                    sweep_dir,
-                                    strength,
-                                    regime,
-                                    bias,
-                                    map_level,
-                                    setup_level,
-                                    liquidity_type,
-                                    plan,
-                                )
+                                if is_shadow:
+                                    dbg(
+                                        f"   [SHADOW] {symbol} DOUBLE_SWEEP "
+                                        f"strength={strength} enabled={DOUBLE_SWEEP_ENABLED}"
+                                    )
+                                else:
+                                    print(
+                                        f"[DOUBLE SWEEP] {symbol} {sweep_dir} strength={strength}"
+                                    )
+                                    send_double_sweep_alert(
+                                        symbol,
+                                        trigger_df,
+                                        sweep_dir,
+                                        strength,
+                                        regime,
+                                        bias,
+                                        map_level,
+                                        setup_level,
+                                        liquidity_type,
+                                        plan,
+                                    )
                                 tracked = post_sweep_to_radar(
                                     symbol=symbol,
                                     event_type="DOUBLE_SWEEP",
@@ -2260,12 +2272,14 @@ def main_loop():
                                     plan=plan,
                                     df=trigger_df,
                                     ema_context="Double Sweep",
+                                    shadow=is_shadow,
                                 )
                                 register_pending_outcome(
                                     pending_outcomes, symbol, tracked
                                 )
                                 last_double[symbol] = now
-                                double_count += 1
+                                if not is_shadow:
+                                    double_count += 1
                     # [FILTER 7] DETECTED: cooldown + level-reset guard
                     level_moved = (
                         symbol not in last_detected_level
@@ -2279,7 +2293,6 @@ def main_loop():
                         if (
                             plan["rr_tp2"] is not None
                             and plan["rr_tp2"] >= MIN_RR_TO_ALERT
-                            and strength >= MIN_CONFIDENCE_TO_POST
                         ):
                             if moved_should_skip(plan, "SWEEP_DETECTED"):
                                 print(
@@ -2289,23 +2302,29 @@ def main_loop():
                                 last_detected[symbol] = now
                                 last_detected_level[symbol] = setup_level
                             else:
-                                print(
-                                    f"[DETECTED] {symbol} {sweep_dir} "
-                                    f"strength={strength} variant={variant}"
-                                )
-                                send_detected_alert(
-                                    symbol,
-                                    trigger_df,
-                                    sweep_dir,
-                                    strength,
-                                    variant,
-                                    regime,
-                                    bias,
-                                    map_level,
-                                    setup_level,
-                                    liquidity_type,
-                                    plan,
-                                )
+                                is_shadow = strength < MIN_CONFIDENCE_TO_POST
+                                if is_shadow:
+                                    dbg(
+                                        f"   [SHADOW] {symbol} DETECTED strength={strength}"
+                                    )
+                                else:
+                                    print(
+                                        f"[DETECTED] {symbol} {sweep_dir} "
+                                        f"strength={strength} variant={variant}"
+                                    )
+                                    send_detected_alert(
+                                        symbol,
+                                        trigger_df,
+                                        sweep_dir,
+                                        strength,
+                                        variant,
+                                        regime,
+                                        bias,
+                                        map_level,
+                                        setup_level,
+                                        liquidity_type,
+                                        plan,
+                                    )
                                 tracked = post_sweep_to_radar(
                                     symbol=symbol,
                                     event_type="SWEEP_DETECTED",
@@ -2320,43 +2339,45 @@ def main_loop():
                                     plan=plan,
                                     df=trigger_df,
                                     ema_context="Setup Sweep Detected",
+                                    shadow=is_shadow,
                                 )
                                 register_pending_outcome(
                                     pending_outcomes, symbol, tracked
                                 )
 
-                                c = trigger_df.iloc[-1]
-                                vol_avg10 = (
-                                    trigger_df["volume"].rolling(10).mean().iloc[-2]
-                                )
-                                log_sweep_event(
-                                    symbol=symbol,
-                                    event="DETECTED",
-                                    direction=sweep_dir,
-                                    strength=strength,
-                                    price=c["close"],
-                                    map_level=map_level,
-                                    setup_level=setup_level,
-                                    liquidity_type=liquidity_type,
-                                    regime=regime,
-                                    bias=bias,
-                                    volume=c["volume"],
-                                    vol_avg10=vol_avg10,
-                                    range_abs=c["range_abs"],
-                                    range_pct=c["range_pct"],
-                                    atr14=c["atr14"],
-                                    variant=variant,
-                                    entry=plan["entry"],
-                                    stop=plan["stop"],
-                                    tp1=plan["tp1"],
-                                    tp2=plan["tp2"],
-                                    rr_tp1=plan["rr_tp1"],
-                                    rr_tp2=plan["rr_tp2"],
-                                    ts_utc=trigger_df.index[-1],
-                                )
+                                if not is_shadow:
+                                    c = trigger_df.iloc[-1]
+                                    vol_avg10 = (
+                                        trigger_df["volume"].rolling(10).mean().iloc[-2]
+                                    )
+                                    log_sweep_event(
+                                        symbol=symbol,
+                                        event="DETECTED",
+                                        direction=sweep_dir,
+                                        strength=strength,
+                                        price=c["close"],
+                                        map_level=map_level,
+                                        setup_level=setup_level,
+                                        liquidity_type=liquidity_type,
+                                        regime=regime,
+                                        bias=bias,
+                                        volume=c["volume"],
+                                        vol_avg10=vol_avg10,
+                                        range_abs=c["range_abs"],
+                                        range_pct=c["range_pct"],
+                                        atr14=c["atr14"],
+                                        variant=variant,
+                                        entry=plan["entry"],
+                                        stop=plan["stop"],
+                                        tp1=plan["tp1"],
+                                        tp2=plan["tp2"],
+                                        rr_tp1=plan["rr_tp1"],
+                                        rr_tp2=plan["rr_tp2"],
+                                        ts_utc=trigger_df.index[-1],
+                                    )
+                                    det_count += 1
                                 last_detected[symbol] = now
                                 last_detected_level[symbol] = setup_level
-                                det_count += 1
 
                 # Trigger-level checks (reclaim / accepted / confirmed)
                 if symbol in last_sweep_meta:
@@ -2420,9 +2441,9 @@ def main_loop():
                                 liquidity_type=liquidity_type,
                                 progress=plan.get("progress_to_tp1"),
                             )
-                            if scored < MIN_CONFIDENCE_TO_POST:
-                                dbg(f"   [CONFIDENCE SKIP] {symbol} RECLAIM score={scored}")
-                                last_reclaim[symbol] = now
+                            is_shadow = scored < MIN_CONFIDENCE_TO_POST
+                            if is_shadow:
+                                dbg(f"   [SHADOW] {symbol} RECLAIM score={scored}")
                             else:
                                 print(
                                     f"[RECLAIM] {symbol} {direction} "
@@ -2442,23 +2463,25 @@ def main_loop():
                                     liquidity_type,
                                     plan,
                                 )
-                                tracked = post_sweep_to_radar(
-                                    symbol=symbol,
-                                    event_type="SWEEP_RECLAIM",
-                                    direction=direction,
-                                    strength=scored,
-                                    regime=regime,
-                                    bias=bias,
-                                    map_level=map_level,
-                                    setup_level=setup_level,
-                                    liquidity_type=liquidity_type,
-                                    variant=variant,
-                                    plan=plan,
-                                    df=trigger_df,
-                                    ema_context="Sweep Reclaim",
-                                )
-                                register_pending_outcome(pending_outcomes, symbol, tracked)
+                            tracked = post_sweep_to_radar(
+                                symbol=symbol,
+                                event_type="SWEEP_RECLAIM",
+                                direction=direction,
+                                strength=scored,
+                                regime=regime,
+                                bias=bias,
+                                map_level=map_level,
+                                setup_level=setup_level,
+                                liquidity_type=liquidity_type,
+                                variant=variant,
+                                plan=plan,
+                                df=trigger_df,
+                                ema_context="Sweep Reclaim",
+                                shadow=is_shadow,
+                            )
+                            register_pending_outcome(pending_outcomes, symbol, tracked)
 
+                            if not is_shadow:
                                 c = trigger_df.iloc[-1]
                                 vol_avg10 = trigger_df["volume"].rolling(10).mean().iloc[-2]
                                 log_sweep_event(
@@ -2486,8 +2509,8 @@ def main_loop():
                                     rr_tp2=plan["rr_tp2"],
                                     ts_utc=trigger_df.index[-1],
                                 )
-                                last_reclaim[symbol] = now
                                 reclaim_count += 1
+                            last_reclaim[symbol] = now
 
                     if trigger_state == "accepted" and (
                         now - last_accepted.get(symbol, 0) > ACCEPTED_COOLDOWN
@@ -2501,9 +2524,9 @@ def main_loop():
                             liquidity_type=liquidity_type,
                             progress=plan.get("progress_to_tp1"),
                         )
-                        if scored < MIN_CONFIDENCE_TO_POST:
-                            dbg(f"   [CONFIDENCE SKIP] {symbol} ACCEPTED score={scored}")
-                            last_accepted[symbol] = now
+                        is_shadow = scored < MIN_CONFIDENCE_TO_POST
+                        if is_shadow:
+                            dbg(f"   [SHADOW] {symbol} ACCEPTED score={scored}")
                         else:
                             print(f"[ACCEPTED] {symbol} {direction} strength={strength}")
                             send_accepted_alert(
@@ -2519,23 +2542,25 @@ def main_loop():
                                 liquidity_type,
                                 plan,
                             )
-                            tracked = post_sweep_to_radar(
-                                symbol=symbol,
-                                event_type="SWEEP_ACCEPTED",
-                                direction=direction,
-                                strength=scored,
-                                regime=regime,
-                                bias=bias,
-                                map_level=map_level,
-                                setup_level=setup_level,
-                                liquidity_type=liquidity_type,
-                                variant=variant,
-                                plan=plan,
-                                df=trigger_df,
-                                ema_context="Sweep Accepted",
-                            )
-                            register_pending_outcome(pending_outcomes, symbol, tracked)
+                        tracked = post_sweep_to_radar(
+                            symbol=symbol,
+                            event_type="SWEEP_ACCEPTED",
+                            direction=direction,
+                            strength=scored,
+                            regime=regime,
+                            bias=bias,
+                            map_level=map_level,
+                            setup_level=setup_level,
+                            liquidity_type=liquidity_type,
+                            variant=variant,
+                            plan=plan,
+                            df=trigger_df,
+                            ema_context="Sweep Accepted",
+                            shadow=is_shadow,
+                        )
+                        register_pending_outcome(pending_outcomes, symbol, tracked)
 
+                        if not is_shadow:
                             c = trigger_df.iloc[-1]
                             vol_avg10 = trigger_df["volume"].rolling(10).mean().iloc[-2]
                             log_sweep_event(
@@ -2563,8 +2588,8 @@ def main_loop():
                                 rr_tp2=plan["rr_tp2"],
                                 ts_utc=trigger_df.index[-1],
                             )
-                            last_accepted[symbol] = now
                             accepted_count += 1
+                        last_accepted[symbol] = now
 
                     if detect_confirmed_displacement(
                         trigger_df, direction, plan["entry"]
@@ -2596,12 +2621,9 @@ def main_loop():
                                     liquidity_type=liquidity_type,
                                     progress=plan.get("progress_to_tp1"),
                                 )
-                                if scored < MIN_CONFIDENCE_TO_POST:
-                                    dbg(
-                                        f"   [CONFIDENCE SKIP] {symbol} CONFIRMED score={scored}"
-                                    )
-                                    last_confirmed[symbol] = now
-                                    last_confirmed_level[symbol] = setup_level
+                                is_shadow = scored < MIN_CONFIDENCE_TO_POST
+                                if is_shadow:
+                                    dbg(f"   [SHADOW] {symbol} CONFIRMED score={scored}")
                                 else:
                                     print(
                                         f"[CONFIRMED] {symbol} {direction} "
@@ -2620,25 +2642,27 @@ def main_loop():
                                         liquidity_type,
                                         plan,
                                     )
-                                    tracked = post_sweep_to_radar(
-                                        symbol=symbol,
-                                        event_type="SWEEP_CONFIRMED",
-                                        direction=direction,
-                                        strength=scored,
-                                        regime=regime,
-                                        bias=bias,
-                                        map_level=map_level,
-                                        setup_level=setup_level,
-                                        liquidity_type=liquidity_type,
-                                        variant=variant,
-                                        plan=plan,
-                                        df=trigger_df,
-                                        ema_context="Sweep Confirmed",
-                                    )
-                                    register_pending_outcome(
-                                        pending_outcomes, symbol, tracked
-                                    )
+                                tracked = post_sweep_to_radar(
+                                    symbol=symbol,
+                                    event_type="SWEEP_CONFIRMED",
+                                    direction=direction,
+                                    strength=scored,
+                                    regime=regime,
+                                    bias=bias,
+                                    map_level=map_level,
+                                    setup_level=setup_level,
+                                    liquidity_type=liquidity_type,
+                                    variant=variant,
+                                    plan=plan,
+                                    df=trigger_df,
+                                    ema_context="Sweep Confirmed",
+                                    shadow=is_shadow,
+                                )
+                                register_pending_outcome(
+                                    pending_outcomes, symbol, tracked
+                                )
 
+                                if not is_shadow:
                                     c = trigger_df.iloc[-1]
                                     vol_avg10 = (
                                         trigger_df["volume"].rolling(10).mean().iloc[-2]
@@ -2668,9 +2692,9 @@ def main_loop():
                                         rr_tp2=plan["rr_tp2"],
                                         ts_utc=trigger_df.index[-1],
                                     )
-                                    last_confirmed[symbol] = now
-                                    last_confirmed_level[symbol] = setup_level
                                     confirmed_count += 1
+                                last_confirmed[symbol] = now
+                                last_confirmed_level[symbol] = setup_level
                     else:
                         dbg("   [CONFIRM CHECK] False")
 

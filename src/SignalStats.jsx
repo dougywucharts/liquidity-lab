@@ -68,12 +68,13 @@ export default function SignalStats({ onBack }) {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [viewShadow, setViewShadow] = useState(false);
 
-  async function load() {
+  async function load(shadow) {
     try {
       setLoading(true);
       setError("");
-      const res = await fetch(`${API_BASE}/sweep/stats`);
+      const res = await fetch(`${API_BASE}/sweep/stats?shadow=${shadow ? "true" : "false"}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setStats(data);
@@ -85,8 +86,8 @@ export default function SignalStats({ onBack }) {
   }
 
   useEffect(() => {
-    load();
-  }, []);
+    load(viewShadow);
+  }, [viewShadow]);
 
   const overall = stats?.overall;
 
@@ -101,9 +102,20 @@ export default function SignalStats({ onBack }) {
               Every alert, tracked forward. Win rate is TP1 or TP2 hit before stop,
               among resolved signals only (expired/still-pending excluded).
             </p>
+            {stats?.filter?.since && (
+              <p style={{ ...s.muted, fontSize: 11, marginTop: 4 }}>
+                Since {new Date(stats.filter.since).toLocaleString()} (today's config changes — earlier data blends multiple bot versions)
+              </p>
+            )}
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <button style={s.secondaryButton} onClick={load} disabled={loading}>
+            <button
+              style={{ ...s.secondaryButton, ...(viewShadow ? s.secondaryButtonActive : {}) }}
+              onClick={() => setViewShadow((v) => !v)}
+            >
+              {viewShadow ? "👁 Viewing shadow (suppressed)" : "Show shadow signals"}
+            </button>
+            <button style={s.secondaryButton} onClick={() => load(viewShadow)} disabled={loading}>
               {loading ? "Refreshing…" : "🔄 Refresh"}
             </button>
             {onBack && (
@@ -111,6 +123,14 @@ export default function SignalStats({ onBack }) {
             )}
           </div>
         </div>
+
+        {viewShadow && (
+          <div style={s.shadowBanner}>
+            Shadow mode: signals that got suppressed (below the confidence floor, or
+            a disabled event type) but were still tracked for outcome. Never shown
+            to users — this is purely to prove the filter is earning its keep.
+          </div>
+        )}
 
         {error && <div style={s.errorBox}>{error}</div>}
 
@@ -176,6 +196,8 @@ const s = {
   title: { fontSize: 28, fontWeight: 900, margin: "0 0 8px" },
   muted: { fontSize: 13, color: "rgba(244,247,251,0.6)", maxWidth: 560, lineHeight: 1.5, margin: 0 },
   secondaryButton: { border: "1px solid rgba(255,255,255,0.14)", background: "rgba(15,23,42,0.9)", color: "#fff", borderRadius: 12, padding: "9px 14px", fontWeight: 800, cursor: "pointer", fontSize: 13, height: 38 },
+  secondaryButtonActive: { border: "1px solid rgba(246,196,83,0.4)", background: "rgba(246,196,83,0.1)", color: "#f6c453" },
+  shadowBanner: { background: "rgba(246,196,83,0.08)", border: "1px solid rgba(246,196,83,0.25)", borderRadius: 12, padding: 12, marginBottom: 16, fontSize: 12, color: "#f6c453", lineHeight: 1.5 },
   errorBox: { background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12, padding: 12, marginBottom: 16, fontSize: 13, color: "#fca5a5" },
 
   statusGrid: { display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 12, marginBottom: 24 },

@@ -1142,6 +1142,7 @@ app.post('/sweep', async (req, res) => {
           saved.botConfidence != null ? Number(saved.botConfidence) : null,
         tradeState: saved.tradeState || null,
         pattern: saved.pattern || null,
+        shadow: Boolean(saved.shadow),
         payload: payloadForDb
       }
     })
@@ -1153,9 +1154,19 @@ app.post('/sweep', async (req, res) => {
     // Don't fail the request — memory store still works
   }
 
-  events.unshift(saved)
-  if (events.length > MAX_EVENTS) events.pop()
-  console.log('[SWEEP RECEIVED]', saved.pair, saved.eventType || 'UNKNOWN')
+  // Shadow signals (suppressed by the confidence floor or a disabled event
+  // type) are tracked for outcome in the DB but never shown in the live
+  // feed - they're research data, not something a user should act on.
+  if (!saved.shadow) {
+    events.unshift(saved)
+    if (events.length > MAX_EVENTS) events.pop()
+  }
+  console.log(
+    '[SWEEP RECEIVED]',
+    saved.pair,
+    saved.eventType || 'UNKNOWN',
+    saved.shadow ? '(shadow)' : ''
+  )
   res.json({ ok: true, event: saved })
 })
 
@@ -1206,13 +1217,26 @@ app.patch('/sweep/:id/outcome', async (req, res) => {
   }
 })
 
+// Everything before this point blends multiple bot-code versions from the
+// same day (MOVED-suppression, CONFIRMED level-guard, confidence floor,
+// DOUBLE_SWEEP disable all landed at different times) - not a clean
+// baseline for judging the *current* config. Default view starts here;
+// ?all=true still gets the full history if you want it.
+const STATS_BASELINE_SINCE = new Date('2026-07-10T00:19:39.000Z')
+
 // Aggregate signal-quality stats — hit rate broken down by event type,
 // pattern, and pair, so filter thresholds can be tuned against real outcomes
 // instead of guesswork.
 app.get('/sweep/stats', async (req, res) => {
   try {
+    const includeAll = req.query.all === 'true'
+    const showShadow = req.query.shadow === 'true'
     const rows = await prisma.radarEvent.findMany({
-      where: { outcome: { not: 'PENDING' } },
+      where: {
+        outcome: { not: 'PENDING' },
+        shadow: showShadow,
+        ...(includeAll ? {} : { createdAt: { gte: STATS_BASELINE_SINCE } })
+      },
       select: {
         eventType: true,
         pattern: true,
@@ -1294,6 +1318,11 @@ app.get('/sweep/stats', async (req, res) => {
 
     return res.json({
       ok: true,
+      filter: {
+        shadow: showShadow,
+        since: includeAll ? null : STATS_BASELINE_SINCE.toISOString(),
+        all: includeAll
+      },
       overall: summarize(rows),
       byEventType: groupBy(rows, 'eventType'),
       byPattern: groupBy(rows, 'pattern'),
