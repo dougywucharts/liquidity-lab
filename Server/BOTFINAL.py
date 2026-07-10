@@ -661,7 +661,11 @@ def calc_rr(direction, entry, stop, tp1, tp2):
 ENTRY_ZONE_ATR_FRAC = 0.25  # zone depth as fraction of ATR
 SWING_PIVOT_WINDOW = 2  # bars each side for a pivot to count as a swing
 SWING_LOOKBACK_BARS = 60  # how far back to hunt for swing points (1m bars)
-STOP_ATR_PAD = 0.20  # ATR pad beyond the structural anchor
+# Nudged 0.20 -> 0.30: real resolved-signal data showed stops sitting only
+# ~0.16-0.26% of price away, tight enough that ordinary 1m noise was tagging
+# them before the setup got a fair chance. This is a small bump, not a
+# redesign - re-check Signal Quality's stop-vs-target mix after it accumulates.
+STOP_ATR_PAD = 0.30  # ATR pad beyond the structural anchor
 MOVED_PROGRESS_MAX = 0.35  # >35% of the way to TP1 at creation = MOVED
 STOP_MAX_ATR_MULT = 3.0  # sanity cap: stop can't exceed 3x ATR from entry
 
@@ -720,13 +724,13 @@ def find_stop_level(direction, trigger_df, entry_ref, atr):
             stop = anchor - pad
             label = "structure_1_low"
         else:
-            stop = entry_ref - max(px * STOP_BUFFER_PCT, atr * 0.60)
+            stop = entry_ref - max(px * STOP_BUFFER_PCT, atr * 0.75)
             label = "atr_fallback"
         if entry_ref - stop > max_dist:
             stop = entry_ref - max_dist
             label += "_capped"
         if stop >= entry_ref:
-            stop = entry_ref - max(px * STOP_BUFFER_PCT, atr * 0.60)
+            stop = entry_ref - max(px * STOP_BUFFER_PCT, atr * 0.75)
             label = "atr_fallback"
         return stop, label
 
@@ -741,13 +745,13 @@ def find_stop_level(direction, trigger_df, entry_ref, atr):
             stop = anchor + pad
             label = "structure_1_high"
         else:
-            stop = entry_ref + max(px * STOP_BUFFER_PCT, atr * 0.60)
+            stop = entry_ref + max(px * STOP_BUFFER_PCT, atr * 0.75)
             label = "atr_fallback"
         if stop - entry_ref > max_dist:
             stop = entry_ref + max_dist
             label += "_capped"
         if stop <= entry_ref:
-            stop = entry_ref + max(px * STOP_BUFFER_PCT, atr * 0.60)
+            stop = entry_ref + max(px * STOP_BUFFER_PCT, atr * 0.75)
             label = "atr_fallback"
         return stop, label
 
