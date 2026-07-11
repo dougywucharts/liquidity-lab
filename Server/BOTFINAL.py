@@ -155,6 +155,14 @@ DOUBLE_SWEEP_ENABLED = False
 # difference — keeps the roughly-breakeven 60-69% tier, cuts the losers.
 MIN_CONFIDENCE_TO_POST = 65
 
+# Patterns with negative expectancy in Signal Quality data (853 resolved
+# signals): Hook (n=9, -0.17R) and Sweep Watch (n=2, -1R, the "no clear
+# structure" catch-all by definition). Double Tap (n=770, +0.32R) and
+# Sweep + Retest (n=72, +1.19R) both carry positive expectancy and post
+# normally. Shadow-tracked like everything else suppressed, so this can
+# be revisited once more Hook/Sweep Watch samples accumulate.
+WEAK_PATTERNS = {"Hook", "Sweep Watch"}
+
 CHART_WINDOW = (
     300  # 5 hours on 1m — matches trigger lookback so sweep origin is always visible
 )
@@ -2306,7 +2314,13 @@ def main_loop():
                                 last_detected[symbol] = now
                                 last_detected_level[symbol] = setup_level
                             else:
-                                is_shadow = strength < MIN_CONFIDENCE_TO_POST
+                                weak_pattern = (
+                                    detect_pattern(sweep_dir, trigger_df, setup_level)
+                                    in WEAK_PATTERNS
+                                )
+                                is_shadow = (
+                                    strength < MIN_CONFIDENCE_TO_POST or weak_pattern
+                                )
                                 if is_shadow:
                                     dbg(
                                         f"   [SHADOW] {symbol} DETECTED strength={strength}"
@@ -2445,7 +2459,13 @@ def main_loop():
                                 liquidity_type=liquidity_type,
                                 progress=plan.get("progress_to_tp1"),
                             )
-                            is_shadow = scored < MIN_CONFIDENCE_TO_POST
+                            weak_pattern = (
+                                detect_pattern(direction, trigger_df, setup_level)
+                                in WEAK_PATTERNS
+                            )
+                            is_shadow = (
+                                scored < MIN_CONFIDENCE_TO_POST or weak_pattern
+                            )
                             if is_shadow:
                                 dbg(f"   [SHADOW] {symbol} RECLAIM score={scored}")
                             else:
@@ -2528,7 +2548,11 @@ def main_loop():
                             liquidity_type=liquidity_type,
                             progress=plan.get("progress_to_tp1"),
                         )
-                        is_shadow = scored < MIN_CONFIDENCE_TO_POST
+                        weak_pattern = (
+                            detect_pattern(direction, trigger_df, setup_level)
+                            in WEAK_PATTERNS
+                        )
+                        is_shadow = scored < MIN_CONFIDENCE_TO_POST or weak_pattern
                         if is_shadow:
                             dbg(f"   [SHADOW] {symbol} ACCEPTED score={scored}")
                         else:
@@ -2625,7 +2649,13 @@ def main_loop():
                                     liquidity_type=liquidity_type,
                                     progress=plan.get("progress_to_tp1"),
                                 )
-                                is_shadow = scored < MIN_CONFIDENCE_TO_POST
+                                weak_pattern = (
+                                    detect_pattern(direction, trigger_df, setup_level)
+                                    in WEAK_PATTERNS
+                                )
+                                is_shadow = (
+                                    scored < MIN_CONFIDENCE_TO_POST or weak_pattern
+                                )
                                 if is_shadow:
                                     dbg(f"   [SHADOW] {symbol} CONFIRMED score={scored}")
                                 else:
