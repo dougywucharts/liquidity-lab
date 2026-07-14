@@ -32,6 +32,8 @@ model User {
   aiReviewReset      DateTime?
   traderDna           Json?
   traderDnaGeneratedAt DateTime?
+  resetPasswordToken     String?   @unique
+  resetPasswordExpiresAt DateTime?
 }
 
 model TradeLog {

@@ -5,6 +5,7 @@ import BillingPage from "./BillingPage.jsx";
 import MembersVault from "./MembersVault.jsx";
 import LandingPage from "./LandingPage.jsx";
 import SignalStats from "./SignalStats.jsx";
+import ResetPasswordPage from "./ResetPasswordPage.jsx";
 
 // ─── Mobile responsive styles injected globally ──────────────────────────────
 const mobileCSS = `
@@ -3304,6 +3305,16 @@ export default function AppPreBeta() {
     ? loggedDecisions
     : loggedDecisions.slice(0, 5);
 
+  if (window.location.pathname.startsWith("/reset-password")) {
+    return (
+      <ResetPasswordPage
+        onDone={() => {
+          window.location.href = "/";
+        }}
+      />
+    );
+  }
+
   if (!isAuthenticated && window.location.pathname.startsWith("/billing")) {
     return (
       <div style={styles.app}>
@@ -3500,6 +3511,25 @@ export default function AppPreBeta() {
                         }}
                       />
                     </FieldLabel>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.location.href = "/reset-password";
+                      }}
+                      style={{
+                        appearance: "none",
+                        border: "none",
+                        background: "none",
+                        color: palette.textDim,
+                        fontSize: 12,
+                        cursor: "pointer",
+                        textAlign: "right",
+                        padding: 0,
+                        textDecoration: "underline",
+                      }}
+                    >
+                      Forgot password?
+                    </button>
                   </div>
                   <button
                     style={{

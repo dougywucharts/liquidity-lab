@@ -1,4 +1,5 @@
 import 'dotenv/config'
+import crypto from 'node:crypto'
 import Anthropic from '@anthropic-ai/sdk'
 import express from 'express'
 import cors from 'cors'
@@ -1464,6 +1465,136 @@ app.post('/login', async (req, res) => {
   } catch (err) {
     console.error('LOGIN ERROR:', err)
     return res.status(500).json({ error: 'Login failed' })
+  }
+})
+
+// Simple in-memory rate limiter for /auth/forgot-password — same Map-based
+// pattern as sweepRateLimiter above. 5 requests per IP per hour.
+const forgotPasswordRateLimiter = new Map()
+const FORGOT_PW_LIMIT = 5
+const FORGOT_PW_WINDOW = 3600000 // 1 hour in ms
+
+function checkForgotPasswordRateLimit (ip) {
+  const now = Date.now()
+  const record = forgotPasswordRateLimiter.get(ip)
+
+  if (!record) {
+    forgotPasswordRateLimiter.set(ip, { count: 1, windowStart: now })
+    return { allowed: true }
+  }
+
+  if (now - record.windowStart > FORGOT_PW_WINDOW) {
+    forgotPasswordRateLimiter.set(ip, { count: 1, windowStart: now })
+    return { allowed: true }
+  }
+
+  record.count++
+  if (record.count > FORGOT_PW_LIMIT) {
+    return {
+      allowed: false,
+      retryAfter: Math.ceil((FORGOT_PW_WINDOW - (now - record.windowStart)) / 1000)
+    }
+  }
+
+  return { allowed: true }
+}
+
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, record] of forgotPasswordRateLimiter.entries()) {
+    if (now - record.windowStart > FORGOT_PW_WINDOW * 2) {
+      forgotPasswordRateLimiter.delete(ip)
+    }
+  }
+}, 5 * 60 * 1000)
+
+app.post('/auth/forgot-password', async (req, res) => {
+  try {
+    const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown'
+    const rateCheck = checkForgotPasswordRateLimit(ip)
+    if (!rateCheck.allowed) {
+      return res.status(429).json({
+        error: 'Too many requests. Please try again later.',
+        retryAfter: rateCheck.retryAfter
+      })
+    }
+
+    const email = String(req.body?.email || '').trim().toLowerCase()
+    const GENERIC_RESPONSE = {
+      ok: true,
+      message: 'If that email exists, a reset link has been sent.'
+    }
+    if (!email) return res.json(GENERIC_RESPONSE)
+
+    const user = await prisma.user.findUnique({ where: { email } })
+    if (user) {
+      const token = crypto.randomBytes(32).toString('hex')
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { resetPasswordToken: token, resetPasswordExpiresAt: expiresAt }
+      })
+
+      if (resend && ALERT_FROM_EMAIL) {
+        const resetUrl = `${APP_URL}/reset-password?token=${token}`
+        resend.emails
+          .send({
+            from: ALERT_FROM_EMAIL,
+            to: user.email,
+            subject: 'Reset your Liquidity Lab password',
+            html: `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;background:#03060b;color:#f4f7fb;padding:40px 32px;border-radius:16px;">
+        <div style="font-size:22px;font-weight:900;margin-bottom:8px;">Liquidity Lab</div>
+        <div style="font-size:12px;color:#ef4444;letter-spacing:2px;text-transform:uppercase;margin-bottom:32px;">Red October Systems</div>
+        <h1 style="font-size:28px;font-weight:900;margin:0 0 16px;">Reset your password</h1>
+        <p style="color:rgba(244,247,251,0.7);line-height:1.6;margin-bottom:24px;">We got a request to reset your Liquidity Lab password. This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+        <a href="${resetUrl}" style="display:inline-block;padding:14px 28px;background:#ef4444;color:#fff;font-weight:900;text-decoration:none;border-radius:10px;margin-bottom:32px;">Reset Password →</a>
+        <hr style="border:none;border-top:1px solid rgba(255,255,255,0.08);margin:24px 0;">
+        <p style="font-size:11px;color:rgba(244,247,251,0.25);margin-top:32px;">Red October Systems · support@redoctobersystems.com</p>
+      </div>
+    `
+          })
+          .catch(err =>
+            console.error('[EMAIL] Reset password email failed:', err.message)
+          )
+      }
+    }
+
+    return res.json(GENERIC_RESPONSE)
+  } catch (err) {
+    console.error('[FORGOT PASSWORD ERROR]', err)
+    return res.status(500).json({ error: 'Something went wrong.' })
+  }
+})
+
+app.post('/auth/reset-password', async (req, res) => {
+  try {
+    const token = String(req.body?.token || '')
+    const newPassword = String(req.body?.newPassword || '')
+    if (!token) return res.status(400).json({ error: 'Missing reset token.' })
+    if (!newPassword || newPassword.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters.' })
+    }
+
+    const user = await prisma.user.findUnique({ where: { resetPasswordToken: token } })
+    if (!user || !user.resetPasswordExpiresAt || new Date() > new Date(user.resetPasswordExpiresAt)) {
+      return res.status(400).json({ error: 'Invalid or expired reset link.' })
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10)
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash,
+        resetPasswordToken: null,
+        resetPasswordExpiresAt: null
+      }
+    })
+
+    return res.json({ ok: true, token: signToken(updated) })
+  } catch (err) {
+    console.error('[RESET PASSWORD ERROR]', err)
+    return res.status(500).json({ error: 'Something went wrong.' })
   }
 })
 
