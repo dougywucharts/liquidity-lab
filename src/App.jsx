@@ -1911,12 +1911,12 @@ function StatsBar({ decisions }) {
         <div style={{ ...styles.statValue, color: palette.long }}>
           {stats.winRate}
         </div>
-        <div style={styles.statSub}>closed trades</div>
+        <div style={styles.statSub}>Closed trades</div>
       </div>
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Avg Realized RR</div>
         <div style={styles.statValue}>{stats.avgRR}</div>
-        <div style={styles.statSub}>closed with exit</div>
+        <div style={styles.statSub}>Closed with exit</div>
       </div>
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Total PnL</div>
@@ -1942,7 +1942,7 @@ function StatsBar({ decisions }) {
           </div>
           <PnlSparkline decisions={decisions} />
         </div>
-        <div style={styles.statSub}>logged pnl only</div>
+        <div style={styles.statSub}>Logged PnL only</div>
       </div>
       <div style={styles.statCard}>
         <div style={styles.statLabel}>Current Streak</div>
@@ -1952,7 +1952,7 @@ function StatsBar({ decisions }) {
             : "—"}
         </div>
         <div style={styles.statSub}>
-          {stats.streakType || "no closed trades"}
+          {stats.streakType || "No closed trades"}
         </div>
       </div>
     </div>
