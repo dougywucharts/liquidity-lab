@@ -2627,7 +2627,11 @@ export default function AppPreBeta() {
           const match = normalized.find(
             (evt) => eventKey(evt) === eventKey(prev),
           );
-          return match || normalized[0] || prev;
+          // If the selected signal aged out of the buffer, keep showing it
+          // as-is rather than silently jumping to whatever's newest overall
+          // (that was snapping the chart/exchange links back to an
+          // unrelated pair the user never picked).
+          return match || prev;
         });
       } catch {
         setEvents([]);
