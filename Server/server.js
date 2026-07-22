@@ -4,6 +4,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import express from 'express'
 import cors from 'cors'
 import fetch from 'node-fetch'
+import { Expo } from 'expo-server-sdk'
 
 const app = express() // MUST come before app.use
 
@@ -188,6 +189,8 @@ const stripe = process.env.STRIPE_SECRET_KEY
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null
+
+const expo = new Expo()
 
 // Switched from OpenAI to Anthropic Claude
 const anthropic = process.env.ANTHROPIC_API_KEY
@@ -1065,6 +1068,76 @@ async function loadRadarEventsFromDb () {
 
 loadRadarEventsFromDb()
 
+// Push notifications — only fired for SWEEP_CONFIRMED (see call site below).
+// Fire-and-forget, same defensive pattern as the Resend email calls: never
+// throws out to the caller, a failure here should never affect /sweep.
+async function dispatchPushNotifications (saved) {
+  const users = await prisma.user.findMany({
+    where: { notificationsEnabled: true, pushTokens: { not: null } },
+    select: { id: true, pushTokens: true, notificationWatchlist: true }
+  })
+
+  const tokenToUserId = new Map()
+  for (const user of users) {
+    const tokens = Array.isArray(user.pushTokens) ? user.pushTokens : []
+    if (!tokens.length) continue
+    const watchlist = Array.isArray(user.notificationWatchlist)
+      ? user.notificationWatchlist
+      : []
+    if (watchlist.length > 0 && !watchlist.includes(saved.pair)) continue
+    for (const t of tokens) {
+      if (t?.token) tokenToUserId.set(t.token, user.id)
+    }
+  }
+
+  if (tokenToUserId.size === 0) return
+
+  const messages = []
+  for (const token of tokenToUserId.keys()) {
+    if (!Expo.isExpoPushToken(token)) continue
+    messages.push({
+      to: token,
+      sound: 'default',
+      title: `${saved.pair} — Confirmed`,
+      body: `${saved.directionBias || ''} setup confirmed`.trim(),
+      data: { pair: saved.pair, eventType: saved.eventType, id: saved.id }
+    })
+  }
+
+  const chunks = expo.chunkPushNotifications(messages)
+  const staleTokens = []
+  for (const chunk of chunks) {
+    try {
+      const tickets = await expo.sendPushNotificationsAsync(chunk)
+      tickets.forEach((ticket, i) => {
+        if (ticket.status === 'error' && ticket.details?.error === 'DeviceNotRegistered') {
+          staleTokens.push(chunk[i].to)
+        }
+      })
+    } catch (err) {
+      console.error('[PUSH] chunk send failed:', err.message)
+    }
+  }
+
+  if (staleTokens.length > 0) {
+    try {
+      for (const token of staleTokens) {
+        const userId = tokenToUserId.get(token)
+        if (!userId) continue
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushTokens: true } })
+        const remaining = (Array.isArray(user?.pushTokens) ? user.pushTokens : []).filter(
+          t => t?.token !== token
+        )
+        await prisma.user.update({ where: { id: userId }, data: { pushTokens: remaining } })
+      }
+    } catch (err) {
+      console.error('[PUSH] stale token cleanup failed:', err.message)
+    }
+  }
+
+  console.log(`[PUSH] sent ${messages.length}, cleaned ${staleTokens.length} stale tokens`)
+}
+
 app.post('/sweep', async (req, res) => {
   // SWEEP_SECRET_KEY is REQUIRED on all /sweep posts — no unauthenticated access
   // Any POST without the correct key is rejected immediately
@@ -1161,6 +1234,11 @@ app.post('/sweep', async (req, res) => {
   if (!saved.shadow) {
     events.unshift(saved)
     if (events.length > MAX_EVENTS) events.pop()
+    if (saved.eventType === 'SWEEP_CONFIRMED') {
+      dispatchPushNotifications(saved).catch(err =>
+        console.error('[PUSH] dispatch failed:', err.message)
+      )
+    }
   }
   console.log(
     '[SWEEP RECEIVED]',
@@ -1646,6 +1724,77 @@ app.get('/me', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[ME ERROR]', err)
     return res.status(500).json({ error: 'Failed to load profile.' })
+  }
+})
+
+// ---------------- PUSH NOTIFICATIONS ----------------
+
+app.post('/notifications/register-token', requireAuth, async (req, res) => {
+  try {
+    const token = String(req.body?.token || '')
+    const platform = req.body?.platform ? String(req.body.platform) : null
+    if (!token.startsWith('ExponentPushToken[')) {
+      return res.status(400).json({ error: 'Invalid push token.' })
+    }
+
+    const existing = Array.isArray(req.user.pushTokens) ? req.user.pushTokens : []
+    const deduped = existing.filter(t => t?.token !== token)
+    deduped.push({ token, addedAt: new Date().toISOString(), platform })
+    const trimmed = deduped.slice(-5) // cap at last 5 devices
+
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { pushTokens: trimmed }
+    })
+
+    return res.json({ ok: true })
+  } catch (err) {
+    console.error('[PUSH TOKEN ERROR]', err)
+    return res.status(500).json({ error: 'Failed to register push token.' })
+  }
+})
+
+app.get('/notifications/preferences', requireAuth, async (req, res) => {
+  return res.json({
+    notificationsEnabled: Boolean(req.user.notificationsEnabled),
+    watchlist: Array.isArray(req.user.notificationWatchlist)
+      ? req.user.notificationWatchlist
+      : []
+  })
+})
+
+app.patch('/notifications/preferences', requireAuth, async (req, res) => {
+  try {
+    const data = {}
+    if (typeof req.body?.notificationsEnabled === 'boolean') {
+      data.notificationsEnabled = req.body.notificationsEnabled
+    }
+    if (req.body?.watchlist !== undefined) {
+      const watchlist = req.body.watchlist
+      if (
+        !Array.isArray(watchlist) ||
+        watchlist.length > 3 ||
+        watchlist.some(p => typeof p !== 'string')
+      ) {
+        return res.status(400).json({ error: 'Watchlist must be an array of up to 3 pairs.' })
+      }
+      data.notificationWatchlist = [...new Set(watchlist)]
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: req.user.id },
+      data
+    })
+
+    return res.json({
+      notificationsEnabled: Boolean(updated.notificationsEnabled),
+      watchlist: Array.isArray(updated.notificationWatchlist)
+        ? updated.notificationWatchlist
+        : []
+    })
+  } catch (err) {
+    console.error('[PUSH PREFS ERROR]', err)
+    return res.status(500).json({ error: 'Failed to update preferences.' })
   }
 })
 

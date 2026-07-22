@@ -34,6 +34,9 @@ model User {
   traderDnaGeneratedAt DateTime?
   resetPasswordToken     String?   @unique
   resetPasswordExpiresAt DateTime?
+  pushTokens             Json?     // [{ token, addedAt, platform }] — supports multiple devices
+  notificationsEnabled   Boolean   @default(false)
+  notificationWatchlist  Json?     // up to 3 pair strings, e.g. ["BTC/USDT","ETH/USDT"]
 }
 
 model TradeLog {
