@@ -4077,6 +4077,29 @@ export default function AppPreBeta() {
 
         <BriefingPanel />
 
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 8,
+            padding: "8px 12px",
+            marginBottom: 12,
+            borderRadius: 10,
+            border: "1px solid rgba(246,196,83,0.2)",
+            background: "rgba(246,196,83,0.06)",
+            color: palette.textSoft,
+            fontSize: 11,
+            lineHeight: 1.5,
+          }}
+        >
+          <span style={{ color: palette.gold, fontWeight: 900 }}>ⓘ</span>
+          <span>
+            Signals are guidance, not trade calls — Entry/Stop/TP levels are
+            approximate. Many highlight a market pattern or situation worth
+            watching rather than a setup meant to be executed as-is.
+          </span>
+        </div>
+
         {/* MAIN GRID */}
         <div style={styles.mainGrid} className="llab-main-grid">
           {/* LEFT: RADAR */}
