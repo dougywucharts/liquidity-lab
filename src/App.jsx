@@ -1614,10 +1614,18 @@ function LightweightExecutionChart({ pair, timeframe, entry, stop, tp1, tp2 }) {
           height: ref.current.clientHeight,
         });
     };
+    // ResizeObserver instead of just window "resize" — the chart's internal
+    // width/height (and thus its mouse/crosshair coordinate mapping) also
+    // needs to update when the CONTAINER resizes for reasons other than the
+    // browser window itself resizing (panel reflow, sidebar toggle, etc.),
+    // otherwise the cursor drifts out of sync with the candles (BUG FIX).
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(ref.current);
     window.addEventListener("resize", resize);
     setChartReady(true);
     return () => {
       setChartReady(false);
+      resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
       chart.remove();
       chartRef.current = null;
