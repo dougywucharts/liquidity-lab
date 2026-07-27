@@ -884,6 +884,43 @@ function FieldLabel({ label, children }) {
   );
 }
 
+function PasswordInput({ value, onChange, placeholder, onKeyDown }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        style={{ ...fieldStyle, paddingRight: 44 }}
+        type={visible ? "text" : "password"}
+        placeholder={placeholder}
+        value={value}
+        onChange={onChange}
+        onKeyDown={onKeyDown}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        style={{
+          position: "absolute",
+          right: 10,
+          top: "50%",
+          transform: "translateY(-50%)",
+          border: "none",
+          background: "none",
+          color: palette.textDim,
+          fontSize: 10,
+          fontWeight: 800,
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+          cursor: "pointer",
+          padding: 0,
+        }}
+      >
+        {visible ? "Hide" : "Show"}
+      </button>
+    </div>
+  );
+}
+
 // ─── SmartTicker ─────────────────────────────────────────────────────────────
 
 function SmartTicker({ items, onSelect }) {
@@ -3506,10 +3543,8 @@ export default function AppPreBeta() {
                       />
                     </FieldLabel>
                     <FieldLabel label="Password">
-                      <input
-                        style={fieldStyle}
+                      <PasswordInput
                         placeholder="Your password"
-                        type="password"
                         value={loginForm.password}
                         onChange={(e) => {
                           setLoginForm((prev) => ({
@@ -3610,10 +3645,8 @@ export default function AppPreBeta() {
                       />
                     </FieldLabel>
                     <FieldLabel label="Password">
-                      <input
-                        style={fieldStyle}
+                      <PasswordInput
                         placeholder="At least 8 characters"
-                        type="password"
                         value={registerForm.password}
                         onChange={(e) => {
                           setRegisterForm((prev) => ({
@@ -3625,10 +3658,8 @@ export default function AppPreBeta() {
                       />
                     </FieldLabel>
                     <FieldLabel label="Confirm Password">
-                      <input
-                        style={fieldStyle}
+                      <PasswordInput
                         placeholder="Repeat password"
-                        type="password"
                         value={registerForm.confirm}
                         onChange={(e) => {
                           setRegisterForm((prev) => ({

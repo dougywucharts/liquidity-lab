@@ -2,6 +2,43 @@ import { useState } from "react";
 
 const API_BASE = import.meta.env.VITE_API_BASE || import.meta.env.VITE_API_URL || "http://localhost:5000";
 
+function PasswordField({ value, onChange, placeholder, autoFocus }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <input
+        type={visible ? "text" : "password"}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        style={{ ...s.input, paddingRight: 56 }}
+        autoFocus={autoFocus}
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        style={{
+          position: "absolute",
+          right: 14,
+          top: "50%",
+          transform: "translateY(-50%)",
+          border: "none",
+          background: "none",
+          color: "rgba(255,255,255,0.45)",
+          fontSize: 11,
+          fontWeight: 800,
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+          cursor: "pointer",
+          padding: 0,
+        }}
+      >
+        {visible ? "Hide" : "Show"}
+      </button>
+    </div>
+  );
+}
+
 async function apiFetch(path, options = {}) {
   const headers = {
     ...(options.body ? { "Content-Type": "application/json" } : {}),
@@ -126,21 +163,17 @@ export default function ResetPasswordPage({ onDone }) {
           <form onSubmit={handleResetSubmit}>
             <p style={s.muted}>Choose a new password for your account.</p>
             <label style={s.label}>New password</label>
-            <input
-              type="password"
+            <PasswordField
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="At least 8 characters"
-              style={s.input}
               autoFocus
             />
             <label style={s.label}>Confirm password</label>
-            <input
-              type="password"
+            <PasswordField
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Re-enter password"
-              style={s.input}
             />
             {error && <div style={s.errorBox}>{error}</div>}
             <button
