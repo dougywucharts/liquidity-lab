@@ -1074,7 +1074,7 @@ loadRadarEventsFromDb()
 async function dispatchPushNotifications (saved) {
   const users = await prisma.user.findMany({
     where: { notificationsEnabled: true, pushTokens: { not: null } },
-    select: { id: true, pushTokens: true, notificationWatchlist: true }
+    select: { id: true, pushTokens: true, notificationWatchlist: true, notificationPatterns: true }
   })
 
   const tokenToUserId = new Map()
@@ -1085,6 +1085,10 @@ async function dispatchPushNotifications (saved) {
       ? user.notificationWatchlist
       : []
     if (watchlist.length > 0 && !watchlist.includes(saved.pair)) continue
+    const patterns = Array.isArray(user.notificationPatterns)
+      ? user.notificationPatterns
+      : []
+    if (patterns.length > 0 && !patterns.includes(saved.pattern)) continue
     for (const t of tokens) {
       if (t?.token) tokenToUserId.set(t.token, user.id)
     }
@@ -1754,11 +1758,17 @@ app.post('/notifications/register-token', requireAuth, async (req, res) => {
   }
 })
 
+// Must match detect_pattern()'s return values in BOTFINAL.py exactly.
+const VALID_PATTERNS = ['Failed Reclaim', 'Double Tap', 'Sweep + Retest', 'Hook', 'Sweep Watch']
+
 app.get('/notifications/preferences', requireAuth, async (req, res) => {
   return res.json({
     notificationsEnabled: Boolean(req.user.notificationsEnabled),
     watchlist: Array.isArray(req.user.notificationWatchlist)
       ? req.user.notificationWatchlist
+      : [],
+    patterns: Array.isArray(req.user.notificationPatterns)
+      ? req.user.notificationPatterns
       : []
   })
 })
@@ -1780,6 +1790,16 @@ app.patch('/notifications/preferences', requireAuth, async (req, res) => {
       }
       data.notificationWatchlist = [...new Set(watchlist)]
     }
+    if (req.body?.patterns !== undefined) {
+      const patterns = req.body.patterns
+      if (
+        !Array.isArray(patterns) ||
+        patterns.some(p => !VALID_PATTERNS.includes(p))
+      ) {
+        return res.status(400).json({ error: 'Invalid pattern in list.' })
+      }
+      data.notificationPatterns = [...new Set(patterns)]
+    }
 
     const updated = await prisma.user.update({
       where: { id: req.user.id },
@@ -1790,6 +1810,9 @@ app.patch('/notifications/preferences', requireAuth, async (req, res) => {
       notificationsEnabled: Boolean(updated.notificationsEnabled),
       watchlist: Array.isArray(updated.notificationWatchlist)
         ? updated.notificationWatchlist
+        : [],
+      patterns: Array.isArray(updated.notificationPatterns)
+        ? updated.notificationPatterns
         : []
     })
   } catch (err) {

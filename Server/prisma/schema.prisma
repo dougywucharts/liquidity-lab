@@ -37,6 +37,7 @@ model User {
   pushTokens             Json?     // [{ token, addedAt, platform }] — supports multiple devices
   notificationsEnabled   Boolean   @default(false)
   notificationWatchlist  Json?     // up to 3 pair strings, e.g. ["BTC/USDT","ETH/USDT"]
+  notificationPatterns   Json?     // subset of pattern names, e.g. ["Sweep + Retest"] — empty/null = any pattern
 }
 
 model TradeLog {
