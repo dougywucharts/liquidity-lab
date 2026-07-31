@@ -4313,9 +4313,7 @@ export default function AppPreBeta() {
                               fontSize: 10,
                               fontWeight: 700,
                               color: palette.textSoft,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
+                              lineHeight: 1.4,
                             }}
                           >
                             {wave.timeframe} · {wave.sweepType}
