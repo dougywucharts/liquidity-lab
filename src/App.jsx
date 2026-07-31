@@ -4319,6 +4319,10 @@ export default function AppPreBeta() {
                             }}
                           >
                             {wave.timeframe} · {wave.sweepType}
+                            {wave.events?.[0]?.pattern &&
+                            wave.events[0].pattern !== wave.sweepType
+                              ? ` · ${wave.events[0].pattern}`
+                              : ""}
                           </div>
                           <div style={{ fontSize: 9, color: palette.textDim }}>
                             {wave.events?.length || 1}× ·{" "}
