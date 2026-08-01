@@ -97,9 +97,13 @@ MIN_SETUP_STRENGTH = 38  # [FILTER 3] was 5
 # Shadow-only for now: sweep depth (how far price closed beyond the prior
 # swing high/low, as % of price) only ever fed the strength score as a bonus,
 # never gated anything - a shallow, insignificant "sweep" could still pass if
-# other factors compensated. Starting threshold, tune once shadow data comes
-# in comparing shallow vs deeper sweeps' actual win rate.
-MIN_SWEEP_DEPTH_PCT = 0.0015
+# other factors compensated. 0.0015 (0.15%) was picked without real data and
+# turned out to shadow-suppress ~100% of signals (even 100%-confidence ones)
+# on 1m timeframes - real depths run much smaller than assumed. Dropped to a
+# conservative floor that only catches near-zero-depth noise; SWEEP_DEPTH_PCT
+# is logged below so a properly-calibrated threshold can be set once there's
+# real distribution data instead of guessing again.
+MIN_SWEEP_DEPTH_PCT = 0.0002
 
 # Bias alignment gate
 COUNTER_TREND_MIN_STRENGTH = 50  # [FILTER 8] counter-trend sweeps need this
@@ -2171,6 +2175,11 @@ def main_loop():
                     sweep_depth_pct,
                 ) = detect_setup_sweep(setup_df, map_df)
                 shallow_sweep = sweep_depth_pct < MIN_SWEEP_DEPTH_PCT
+                if sweep_flag:
+                    print(
+                        f"   [DEPTH] {symbol} depth={round(sweep_depth_pct * 100, 4)}% "
+                        f"shallow={shallow_sweep} (floor={MIN_SWEEP_DEPTH_PCT * 100}%)"
+                    )
 
                 if "SUI" in symbol:
                     print(
@@ -2237,6 +2246,7 @@ def main_loop():
                         "liquidity_type": liquidity_type,
                         "regime": regime,
                         "bias": bias,
+                        "depth": sweep_depth_pct,
                     }
 
                     # Double sweep
@@ -2419,6 +2429,13 @@ def main_loop():
                     variant = sm["variant"]
                     liquidity_type = sm["liquidity_type"]
                     sweep_ts = sm.get("sweep_ts")  # [FILTER 15]
+                    # BUG FIX: shallow_sweep was left at whatever THIS cycle's
+                    # (usually sweep-less) detect_setup_sweep() call produced,
+                    # not the depth of the actual sweep being reclaimed/
+                    # confirmed here - defaulted to depth=0 -> shallow=True on
+                    # almost every cycle, shadow-suppressing ~100% of RECLAIM/
+                    # ACCEPTED/CONFIRMED regardless of confidence or pattern.
+                    shallow_sweep = sm.get("depth", 0) < MIN_SWEEP_DEPTH_PCT
 
                     # [FILTER 10] Pass sweep_ts for staleness check
                     _reclaim_level = (
