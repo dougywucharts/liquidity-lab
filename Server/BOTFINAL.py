@@ -94,6 +94,12 @@ WICK_PRICE_MIN = 0.0025
 SFP_PENETRATION_MIN = 0.0005
 CONFIRM_MAX_BARS = 3
 MIN_SETUP_STRENGTH = 38  # [FILTER 3] was 5
+# Shadow-only for now: sweep depth (how far price closed beyond the prior
+# swing high/low, as % of price) only ever fed the strength score as a bonus,
+# never gated anything - a shallow, insignificant "sweep" could still pass if
+# other factors compensated. Starting threshold, tune once shadow data comes
+# in comparing shallow vs deeper sweeps' actual win rate.
+MIN_SWEEP_DEPTH_PCT = 0.0015
 
 # Bias alignment gate
 COUNTER_TREND_MIN_STRENGTH = 50  # [FILTER 8] counter-trend sweeps need this
@@ -918,7 +924,7 @@ def detect_setup_sweep(setup_df, map_df):
       6. Bias alignment: counter-trend needs strength >= 65, then penalised
       7. Off-hours: skipped unless strength >= OFF_HOURS_MIN_STRENGTH
     """
-    FAIL = (False, None, 0, None, None, "normal", None)
+    FAIL = (False, None, 0, None, None, "normal", None, 0)
 
     needed = SETUP_LOOKBACK + SETUP_SWING_BACK + 10
     if len(setup_df) < needed:
@@ -1066,6 +1072,7 @@ def detect_setup_sweep(setup_df, map_df):
         setup_level,
         "swing_liquidity",
         liquidity_type,
+        depth,
     )
 
 
@@ -2161,7 +2168,9 @@ def main_loop():
                     setup_level,
                     base_variant,
                     liquidity_type,
+                    sweep_depth_pct,
                 ) = detect_setup_sweep(setup_df, map_df)
+                shallow_sweep = sweep_depth_pct < MIN_SWEEP_DEPTH_PCT
 
                 if "SUI" in symbol:
                     print(
@@ -2248,6 +2257,7 @@ def main_loop():
                                 is_shadow = (
                                     not DOUBLE_SWEEP_ENABLED
                                     or strength < MIN_CONFIDENCE_TO_POST
+                                    or shallow_sweep
                                 )
                                 if is_shadow:
                                     dbg(
@@ -2319,7 +2329,9 @@ def main_loop():
                                     in WEAK_PATTERNS
                                 )
                                 is_shadow = (
-                                    strength < MIN_CONFIDENCE_TO_POST or weak_pattern
+                                    strength < MIN_CONFIDENCE_TO_POST
+                                    or weak_pattern
+                                    or shallow_sweep
                                 )
                                 if is_shadow:
                                     dbg(
@@ -2464,7 +2476,9 @@ def main_loop():
                                 in WEAK_PATTERNS
                             )
                             is_shadow = (
-                                scored < MIN_CONFIDENCE_TO_POST or weak_pattern
+                                scored < MIN_CONFIDENCE_TO_POST
+                                or weak_pattern
+                                or shallow_sweep
                             )
                             if is_shadow:
                                 dbg(f"   [SHADOW] {symbol} RECLAIM score={scored}")
@@ -2552,7 +2566,11 @@ def main_loop():
                             detect_pattern(direction, trigger_df, setup_level)
                             in WEAK_PATTERNS
                         )
-                        is_shadow = scored < MIN_CONFIDENCE_TO_POST or weak_pattern
+                        is_shadow = (
+                            scored < MIN_CONFIDENCE_TO_POST
+                            or weak_pattern
+                            or shallow_sweep
+                        )
                         if is_shadow:
                             dbg(f"   [SHADOW] {symbol} ACCEPTED score={scored}")
                         else:
@@ -2654,7 +2672,9 @@ def main_loop():
                                     in WEAK_PATTERNS
                                 )
                                 is_shadow = (
-                                    scored < MIN_CONFIDENCE_TO_POST or weak_pattern
+                                    scored < MIN_CONFIDENCE_TO_POST
+                                    or weak_pattern
+                                    or shallow_sweep
                                 )
                                 if is_shadow:
                                     dbg(f"   [SHADOW] {symbol} CONFIRMED score={scored}")
