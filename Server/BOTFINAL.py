@@ -2174,7 +2174,13 @@ def main_loop():
                     liquidity_type,
                     sweep_depth_pct,
                 ) = detect_setup_sweep(setup_df, map_df)
-                shallow_sweep = sweep_depth_pct < MIN_SWEEP_DEPTH_PCT
+                # bool(...) matters here: sweep_depth_pct is numpy-backed, so
+                # the raw comparison is numpy.bool_, not a native Python bool.
+                # requests' JSON encoder can't serialize numpy.bool_, so any
+                # payload where is_shadow resolved to this raw value failed
+                # to POST entirely (both bridge URLs) - silently blackholing
+                # every signal that would've gone live.
+                shallow_sweep = bool(sweep_depth_pct < MIN_SWEEP_DEPTH_PCT)
                 if sweep_flag:
                     print(
                         f"   [DEPTH] {symbol} depth={round(sweep_depth_pct * 100, 4)}% "
@@ -2435,7 +2441,7 @@ def main_loop():
                     # confirmed here - defaulted to depth=0 -> shallow=True on
                     # almost every cycle, shadow-suppressing ~100% of RECLAIM/
                     # ACCEPTED/CONFIRMED regardless of confidence or pattern.
-                    shallow_sweep = sm.get("depth", 0) < MIN_SWEEP_DEPTH_PCT
+                    shallow_sweep = bool(sm.get("depth", 0) < MIN_SWEEP_DEPTH_PCT)
 
                     # [FILTER 10] Pass sweep_ts for staleness check
                     _reclaim_level = (
