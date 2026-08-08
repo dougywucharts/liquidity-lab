@@ -4200,6 +4200,15 @@ export default function AppPreBeta() {
                 flex: 1,
               }}
             >
+              {visibleWaves.length > 0 && (
+                <style>{`
+                  @keyframes goldenGlow {
+                    0%, 100% { box-shadow: 0 0 8px 1px rgba(246,196,83,0.35), inset 0 0 0 1px rgba(246,196,83,0.5); }
+                    50% { box-shadow: 0 0 18px 4px rgba(246,196,83,0.65), inset 0 0 0 1px rgba(246,196,83,0.8); }
+                  }
+                  .llab-golden-card { animation: goldenGlow 2.2s ease-in-out infinite; }
+                `}</style>
+              )}
               {visibleWaves.length > 0 ? (
                 visibleWaves.map((wave) => {
                   const tone = directionTone(wave.directionBias);
@@ -4222,15 +4231,20 @@ export default function AppPreBeta() {
                         e.pair === selectedEvent.pair &&
                         e.directionBias === selectedEvent.directionBias,
                     );
+                  // "Golden setup" — Sweep + Retest is the standout pattern in
+                  // this bot's own outcome data (65%+ win rate, +1.19R avg,
+                  // far ahead of every other pattern) — worth visually flagging.
+                  const isGolden = wave.events?.[0]?.pattern === "Sweep + Retest";
                   return (
                     <div
                       key={wave.key}
                       onClick={() => selectWaveHead(wave)}
                       onMouseEnter={() => setHoveredWave(wave.key)}
                       onMouseLeave={() => setHoveredWave(null)}
+                      className={isGolden ? "llab-golden-card" : undefined}
                       style={{
                         ...styles.waveCard,
-                        borderLeft: `3px solid ${tone === "long" ? palette.long : palette.short}`,
+                        borderLeft: `3px solid ${isGolden ? palette.gold : tone === "long" ? palette.long : palette.short}`,
                         background: isSelected
                           ? tone === "long"
                             ? "rgba(74,222,128,0.1)"
@@ -4239,16 +4253,20 @@ export default function AppPreBeta() {
                             ? tone === "long"
                               ? "rgba(74,222,128,0.06)"
                               : "rgba(251,113,133,0.06)"
-                            : "rgba(10,14,22,0.92)",
+                            : isGolden
+                              ? "rgba(246,196,83,0.05)"
+                              : "rgba(10,14,22,0.92)",
                         transform:
                           hoveredWave === wave.key
                             ? "translateX(2px)"
                             : "translateX(0)",
-                        boxShadow: isSelected
-                          ? tone === "long"
-                            ? "inset 0 0 0 1px rgba(74,222,128,0.3)"
-                            : "inset 0 0 0 1px rgba(251,113,133,0.3)"
-                          : "none",
+                        boxShadow: isGolden
+                          ? undefined // handled by the goldenGlow animation
+                          : isSelected
+                            ? tone === "long"
+                              ? "inset 0 0 0 1px rgba(74,222,128,0.3)"
+                              : "inset 0 0 0 1px rgba(251,113,133,0.3)"
+                            : "none",
                       }}
                     >
                       <div
@@ -4307,6 +4325,21 @@ export default function AppPreBeta() {
                             >
                               {state}
                             </span>
+                            {isGolden && (
+                              <span
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: 900,
+                                  padding: "2px 6px",
+                                  borderRadius: 999,
+                                  background: "rgba(246,196,83,0.18)",
+                                  color: palette.gold,
+                                  letterSpacing: 0.3,
+                                }}
+                              >
+                                ★ GOLDEN
+                              </span>
+                            )}
                           </div>
                           <div
                             style={{
