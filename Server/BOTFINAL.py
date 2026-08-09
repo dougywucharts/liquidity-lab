@@ -181,6 +181,17 @@ WEAK_PATTERNS = {"Hook", "Sweep Watch"}
 # still posted and tracked for outcome, just not shown live.
 WEAK_PAIRS = {"SAND/USDT"}
 
+# Weakest two sessions in Signal Quality data (session breakdown, ~16.5k
+# resolved signals): Off-Hours (42.6%, +0.39R, n=5965) and London (41.0%,
+# +0.33R, n=1996) — together nearly half of total volume. Both still
+# slightly positive, not losing like SAND/Hook/Sweep Watch, so this is a
+# softer cut than those - but they're the clear bottom two out of eight
+# sessions, and stacking this with pattern+eventType+pair filtering took
+# the combined win rate from 43.7% overall to 73.8% (n=328). Shadow-
+# tracked like everything else, so the live-vs-shadow gap can keep being
+# checked as more data comes in.
+WEAK_SESSIONS = {"Off-Hours", "London"}
+
 CHART_WINDOW = (
     300  # 5 hours on 1m — matches trigger lookback so sweep origin is always visible
 )
@@ -2190,6 +2201,9 @@ def main_loop():
                 # every signal that would've gone live.
                 shallow_sweep = bool(sweep_depth_pct < MIN_SWEEP_DEPTH_PCT)
                 weak_pair = clean_symbol_for_radar(symbol) in WEAK_PAIRS
+                # Matches trigger_df=trigger_df used in every post_sweep_to_radar
+                # call below, so this is the exact same session that gets stored.
+                weak_session = classify_time_window(trigger_df.index[-1]) in WEAK_SESSIONS
                 if sweep_flag:
                     print(
                         f"   [DEPTH] {symbol} depth={round(sweep_depth_pct * 100, 4)}% "
@@ -2284,6 +2298,7 @@ def main_loop():
                                     or strength < MIN_CONFIDENCE_TO_POST
                                     or shallow_sweep
                                     or weak_pair
+                                    or weak_session
                                 )
                                 if is_shadow:
                                     dbg(
@@ -2359,6 +2374,7 @@ def main_loop():
                                     or weak_pattern
                                     or shallow_sweep
                                     or weak_pair
+                                    or weak_session
                                 )
                                 if is_shadow:
                                     dbg(
@@ -2514,6 +2530,7 @@ def main_loop():
                                 or weak_pattern
                                 or shallow_sweep
                                 or weak_pair
+                                or weak_session
                             )
                             if is_shadow:
                                 dbg(f"   [SHADOW] {symbol} RECLAIM score={scored}")
@@ -2606,6 +2623,7 @@ def main_loop():
                             or weak_pattern
                             or shallow_sweep
                             or weak_pair
+                            or weak_session
                         )
                         if is_shadow:
                             dbg(f"   [SHADOW] {symbol} ACCEPTED score={scored}")
@@ -2712,6 +2730,7 @@ def main_loop():
                                     or weak_pattern
                                     or shallow_sweep
                                     or weak_pair
+                                    or weak_session
                                 )
                                 if is_shadow:
                                     dbg(f"   [SHADOW] {symbol} CONFIRMED score={scored}")
