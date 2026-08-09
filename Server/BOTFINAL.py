@@ -181,16 +181,15 @@ WEAK_PATTERNS = {"Hook", "Sweep Watch"}
 # still posted and tracked for outcome, just not shown live.
 WEAK_PAIRS = {"SAND/USDT"}
 
-# Weakest two sessions in Signal Quality data (session breakdown, ~16.5k
-# resolved signals): Off-Hours (42.6%, +0.39R, n=5965) and London (41.0%,
-# +0.33R, n=1996) — together nearly half of total volume. Both still
-# slightly positive, not losing like SAND/Hook/Sweep Watch, so this is a
-# softer cut than those - but they're the clear bottom two out of eight
-# sessions, and stacking this with pattern+eventType+pair filtering took
-# the combined win rate from 43.7% overall to 73.8% (n=328). Shadow-
-# tracked like everything else, so the live-vs-shadow gap can keep being
-# checked as more data comes in.
-WEAK_SESSIONS = {"Off-Hours", "London"}
+# London is the genuine laggard (41.0%, +0.33R, n=1996) - worth cutting for
+# a modest volume cost. Off-Hours (42.6%, +0.39R, n=5965) was cut here too
+# at first, but that was a mistake: it's only 1.1 points below the 43.7%
+# overall average, not actually weak, and it's 36% of all volume - cutting
+# it meant the live feed going dark for over a third of the day for very
+# little quality gain. Restored; Off-Hours signals still have to clear
+# every other gate (confidence/pattern/pair/depth), they just aren't
+# blanket-suppressed for the session alone anymore.
+WEAK_SESSIONS = {"London"}
 
 CHART_WINDOW = (
     300  # 5 hours on 1m — matches trigger lookback so sweep origin is always visible
