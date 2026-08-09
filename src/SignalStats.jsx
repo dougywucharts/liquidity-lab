@@ -17,6 +17,7 @@ function avgRColor(avgR) {
 }
 
 const CONFIDENCE_ORDER = ["90-100%", "80-89%", "70-79%", "60-69%", "50-59%", "Below 50%"];
+const SESSION_ORDER = ["Asia Open", "Asia", "London Open", "London", "NY Open", "NY", "NY Close", "Off-Hours"];
 
 function BreakdownTable({ title, data, minSample = 5, order }) {
   const entries = Object.entries(data || {});
@@ -179,6 +180,11 @@ export default function SignalStats({ onBack }) {
             title="By confidence score"
             data={stats?.byConfidence}
             order={CONFIDENCE_ORDER}
+          />
+          <BreakdownTable
+            title="By session"
+            data={stats?.bySession}
+            order={SESSION_ORDER}
           />
         </div>
 

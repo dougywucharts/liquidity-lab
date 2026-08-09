@@ -173,6 +173,14 @@ MIN_CONFIDENCE_TO_POST = 65
 # be revisited once more Hook/Sweep Watch samples accumulate.
 WEAK_PATTERNS = {"Hook", "Sweep Watch"}
 
+# Pairs with negative expectancy in Signal Quality data. SAND/USDT is the
+# clear case (31.3% win rate, -0.04R, n=327 — actually losing, not just
+# weak). Other borderline pairs (AXS, TRX, MINA, ROSE) are still barely
+# positive with smaller samples, so left alone for now rather than cutting
+# several pairs on one pass. Same shadow-tracking as everything else here —
+# still posted and tracked for outcome, just not shown live.
+WEAK_PAIRS = {"SAND/USDT"}
+
 CHART_WINDOW = (
     300  # 5 hours on 1m — matches trigger lookback so sweep origin is always visible
 )
@@ -2181,6 +2189,7 @@ def main_loop():
                 # to POST entirely (both bridge URLs) - silently blackholing
                 # every signal that would've gone live.
                 shallow_sweep = bool(sweep_depth_pct < MIN_SWEEP_DEPTH_PCT)
+                weak_pair = clean_symbol_for_radar(symbol) in WEAK_PAIRS
                 if sweep_flag:
                     print(
                         f"   [DEPTH] {symbol} depth={round(sweep_depth_pct * 100, 4)}% "
@@ -2274,6 +2283,7 @@ def main_loop():
                                     not DOUBLE_SWEEP_ENABLED
                                     or strength < MIN_CONFIDENCE_TO_POST
                                     or shallow_sweep
+                                    or weak_pair
                                 )
                                 if is_shadow:
                                     dbg(
@@ -2348,6 +2358,7 @@ def main_loop():
                                     strength < MIN_CONFIDENCE_TO_POST
                                     or weak_pattern
                                     or shallow_sweep
+                                    or weak_pair
                                 )
                                 if is_shadow:
                                     dbg(
@@ -2502,6 +2513,7 @@ def main_loop():
                                 scored < MIN_CONFIDENCE_TO_POST
                                 or weak_pattern
                                 or shallow_sweep
+                                or weak_pair
                             )
                             if is_shadow:
                                 dbg(f"   [SHADOW] {symbol} RECLAIM score={scored}")
@@ -2593,6 +2605,7 @@ def main_loop():
                             scored < MIN_CONFIDENCE_TO_POST
                             or weak_pattern
                             or shallow_sweep
+                            or weak_pair
                         )
                         if is_shadow:
                             dbg(f"   [SHADOW] {symbol} ACCEPTED score={scored}")
@@ -2698,6 +2711,7 @@ def main_loop():
                                     scored < MIN_CONFIDENCE_TO_POST
                                     or weak_pattern
                                     or shallow_sweep
+                                    or weak_pair
                                 )
                                 if is_shadow:
                                     dbg(f"   [SHADOW] {symbol} CONFIRMED score={scored}")

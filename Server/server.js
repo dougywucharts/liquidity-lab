@@ -1324,6 +1324,7 @@ app.get('/sweep/stats', async (req, res) => {
         eventType: true,
         pattern: true,
         pair: true,
+        session: true,
         outcome: true,
         botConfidence: true,
         entry: true,
@@ -1410,6 +1411,7 @@ app.get('/sweep/stats', async (req, res) => {
       byEventType: groupBy(rows, 'eventType'),
       byPattern: groupBy(rows, 'pattern'),
       byPair: groupBy(rows, 'pair'),
+      bySession: groupBy(rows, 'session'),
       byConfidence: groupBy(rows, r => bucketConfidence(r.botConfidence))
     })
   } catch (err) {
