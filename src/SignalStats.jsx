@@ -91,6 +91,7 @@ export default function SignalStats({ onBack }) {
   }, [viewShadow]);
 
   const overall = stats?.overall;
+  const golden = stats?.golden;
 
   return (
     <div style={s.page}>
@@ -172,6 +173,35 @@ export default function SignalStats({ onBack }) {
           </div>
         </div>
 
+        {golden && (
+          <div style={s.goldenBox}>
+            <div style={s.goldenHeader}>
+              <div>
+                <div style={s.goldenKicker}>★ GOLDEN — STACKED FILTERS</div>
+                <div style={s.goldenCriteria}>{golden.criteria}</div>
+              </div>
+            </div>
+            <div style={s.goldenStats}>
+              <div>
+                <div style={s.label}>Total</div>
+                <div style={s.bigValue}>{golden.total ?? "—"}</div>
+              </div>
+              <div>
+                <div style={s.label}>Win rate</div>
+                <div style={{ ...s.bigValue, color: winRateColor(golden.winRate) }}>
+                  {golden.winRate == null ? "—" : `${golden.winRate}%`}
+                </div>
+              </div>
+              <div>
+                <div style={s.label}>Avg R</div>
+                <div style={{ ...s.bigValue, color: avgRColor(golden.avgR) }}>
+                  {golden.avgR == null ? "—" : `${golden.avgR > 0 ? "+" : ""}${golden.avgR}R`}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={s.breakdownGrid}>
           <BreakdownTable title="By event type" data={stats?.byEventType} />
           <BreakdownTable title="By pattern" data={stats?.byPattern} />
@@ -205,6 +235,12 @@ const s = {
   secondaryButtonActive: { border: "1px solid rgba(246,196,83,0.4)", background: "rgba(246,196,83,0.1)", color: "#f6c453" },
   shadowBanner: { background: "rgba(246,196,83,0.08)", border: "1px solid rgba(246,196,83,0.25)", borderRadius: 12, padding: 12, marginBottom: 16, fontSize: 12, color: "#f6c453", lineHeight: 1.5 },
   errorBox: { background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 12, padding: 12, marginBottom: 16, fontSize: 13, color: "#fca5a5" },
+
+  goldenBox: { border: "1px solid rgba(246,196,83,0.35)", background: "linear-gradient(180deg,rgba(246,196,83,0.08),rgba(246,196,83,0.02))", borderRadius: 20, padding: 18, marginBottom: 24, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 },
+  goldenHeader: { flex: "1 1 260px" },
+  goldenKicker: { fontSize: 11, fontWeight: 900, letterSpacing: 1.5, color: "#f6c453", marginBottom: 6 },
+  goldenCriteria: { fontSize: 12, color: "rgba(244,247,251,0.6)", lineHeight: 1.5 },
+  goldenStats: { display: "flex", gap: 28 },
 
   statusGrid: { display: "grid", gridTemplateColumns: "repeat(6,minmax(0,1fr))", gap: 12, marginBottom: 24 },
   statusCard: { border: "1px solid rgba(255,255,255,0.08)", background: "linear-gradient(180deg,rgba(15,23,42,0.86),rgba(2,6,23,0.78))", borderRadius: 20, padding: 16, minHeight: 100 },

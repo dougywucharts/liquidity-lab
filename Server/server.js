@@ -1400,6 +1400,19 @@ app.get('/sweep/stats', async (req, res) => {
       )
     }
 
+    // "Golden" — the strongest filters stacked together, so you can see the
+    // actual combined win rate instead of eyeballing separate tables.
+    // Confirmed-only + Sweep + Retest + a prime session + not a weak pair.
+    const PRIME_SESSIONS = ['London Open', 'Asia', 'NY Open']
+    const WEAK_PAIRS = ['SAND/USDT']
+    const goldenRows = rows.filter(
+      r =>
+        r.eventType === 'SWEEP_CONFIRMED' &&
+        r.pattern === 'Sweep + Retest' &&
+        PRIME_SESSIONS.includes(r.session) &&
+        !WEAK_PAIRS.includes(r.pair)
+    )
+
     return res.json({
       ok: true,
       filter: {
@@ -1408,6 +1421,10 @@ app.get('/sweep/stats', async (req, res) => {
         all: includeAll
       },
       overall: summarize(rows),
+      golden: {
+        ...summarize(goldenRows),
+        criteria: 'SWEEP_CONFIRMED + Sweep + Retest + London Open/Asia/NY Open, excluding SAND/USDT'
+      },
       byEventType: groupBy(rows, 'eventType'),
       byPattern: groupBy(rows, 'pattern'),
       byPair: groupBy(rows, 'pair'),
