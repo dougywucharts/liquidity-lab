@@ -4231,10 +4231,18 @@ export default function AppPreBeta() {
                         e.pair === selectedEvent.pair &&
                         e.directionBias === selectedEvent.directionBias,
                     );
+                  // Only a confirmed sweep gets treated as a real "signal" —
+                  // DETECTED/RECLAIM/ACCEPTED are shown as lower-emphasis
+                  // reference cards (no confidence/levels, since those numbers
+                  // aren't reliable yet at this stage).
+                  const isConfirmedStage = wave.eventType === "SWEEP_CONFIRMED";
                   // "Golden setup" — Sweep + Retest is the standout pattern in
                   // this bot's own outcome data (65%+ win rate, +1.19R avg,
                   // far ahead of every other pattern) — worth visually flagging.
-                  const isGolden = wave.events?.[0]?.pattern === "Sweep + Retest";
+                  // Only eligible once confirmed, same reasoning as above.
+                  const isGolden =
+                    isConfirmedStage &&
+                    wave.events?.[0]?.pattern === "Sweep + Retest";
                   return (
                     <div
                       key={wave.key}
@@ -4244,7 +4252,16 @@ export default function AppPreBeta() {
                       className={isGolden ? "llab-golden-card" : undefined}
                       style={{
                         ...styles.waveCard,
-                        borderLeft: `3px solid ${isGolden ? palette.gold : tone === "long" ? palette.long : palette.short}`,
+                        opacity: isConfirmedStage ? 1 : 0.68,
+                        borderLeft: `3px solid ${
+                          isGolden
+                            ? palette.gold
+                            : !isConfirmedStage
+                              ? palette.border
+                              : tone === "long"
+                                ? palette.long
+                                : palette.short
+                        }`,
                         background: isSelected
                           ? tone === "long"
                             ? "rgba(74,222,128,0.1)"
@@ -4320,10 +4337,12 @@ export default function AppPreBeta() {
                               style={{
                                 fontSize: 9,
                                 fontWeight: 900,
-                                color: stateColor,
+                                color: isConfirmedStage
+                                  ? stateColor
+                                  : palette.textDim,
                               }}
                             >
-                              {state}
+                              {isConfirmedStage ? state : "WATCHING"}
                             </span>
                             {isGolden && (
                               <span
@@ -4359,37 +4378,41 @@ export default function AppPreBeta() {
                             {wave.events?.length || 1}× ·{" "}
                             {minutesAgo(wave.events?.[0]?.timestampUtc)}
                           </div>
-                          <div
-                            style={{
-                              height: 4,
-                              borderRadius: 999,
-                              background: "rgba(255,255,255,0.08)",
-                              overflow: "hidden",
-                            }}
-                          >
+                          {isConfirmedStage && (
                             <div
                               style={{
-                                height: "100%",
-                                width: `${conf}%`,
-                                background:
-                                  tone === "long"
-                                    ? palette.long
-                                    : palette.short,
+                                height: 4,
                                 borderRadius: 999,
+                                background: "rgba(255,255,255,0.08)",
+                                overflow: "hidden",
                               }}
-                            />
+                            >
+                              <div
+                                style={{
+                                  height: "100%",
+                                  width: `${conf}%`,
+                                  background:
+                                    tone === "long"
+                                      ? palette.long
+                                      : palette.short,
+                                  borderRadius: 999,
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                        {isConfirmedStage && (
+                          <div
+                            style={{
+                              fontSize: 13,
+                              fontWeight: 900,
+                              color:
+                                tone === "long" ? palette.long : palette.short,
+                            }}
+                          >
+                            {conf}%
                           </div>
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 13,
-                            fontWeight: 900,
-                            color:
-                              tone === "long" ? palette.long : palette.short,
-                          }}
-                        >
-                          {conf}%
-                        </div>
+                        )}
                       </div>
                     </div>
                   );
