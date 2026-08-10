@@ -13,3 +13,6 @@ build/
 .vercel
 Server/logs/
 *.csv
+FTMOBridge/logs/
+__pycache__/
+*.pyc
