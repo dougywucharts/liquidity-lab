@@ -160,6 +160,10 @@ model RadarEvent {
   // with real counterfactual data instead of assuming.
   shadow        Boolean  @default(false)
 
+  // Set once this event's resolved outcome has been replayed into an
+  // FtmoSimAccount, so the periodic sim job never double-applies a row.
+  ftmoAppliedAt DateTime?
+
   // Full payload stored as JSON for future use (analytics, AI archive)
   payload       Json
 
@@ -168,4 +172,75 @@ model RadarEvent {
   @@index([eventType, createdAt])
   @@index([outcome])
   @@index([shadow])
+}
+
+// A single simulated $100k FTMO-rules account, replaying real RadarEvent
+// outcomes (the "golden" filter's population) chronologically to see
+// whether the edge survives FTMO's daily-loss/drawdown/profit-target rules
+// - no broker involved, since we already track real win/loss/R-multiple
+// outcomes for every signal. When one attempt PASSES or FAILS, the next
+// RadarEvent processed opens a fresh attempt automatically, mirroring how a
+// real trader would buy the next challenge - so this is a running series,
+// not a single one-shot data point.
+model FtmoSimAccount {
+  id               String    @id @default(cuid())
+  attemptNumber    Int
+  startedAt        DateTime  @default(now())
+  endedAt          DateTime?
+  status           String    @default("ACTIVE") // ACTIVE | PASSED | FAILED
+
+  startBalance     Float
+  currentBalance   Float
+
+  // Rolling daily-loss tracking. currentDay/dayStartBalance reset whenever
+  // an applied event's UTC date differs from currentDay - same rolling-
+  // field idiom as User.screenshotCount/screenshotReset.
+  dayStartBalance  Float
+  currentDay       String
+
+  // Distinct UTC days with >=1 applied trade, for the minTradingDays rule.
+  tradingDaysCount Int       @default(0)
+  lastTradingDay   String?
+
+  // Rule params used for THIS attempt, copied from PROP_PRESETS.ftmo_like
+  // at creation time so a future rule tweak doesn't rewrite closed attempts.
+  profitTargetPct  Float
+  dailyLossPct     Float
+  maxDrawdownPct   Float
+  minTradingDays   Int
+  riskPct          Float
+
+  failReason       String?
+
+  trades           FtmoSimTrade[]
+
+  @@index([status])
+  @@index([attemptNumber])
+}
+
+// One applied RadarEvent outcome against a FtmoSimAccount - the replayable
+// trade log (Postgres equivalent of what ftmo_executor.py would have
+// written to CSV against a real broker).
+model FtmoSimTrade {
+  id             String   @id @default(cuid())
+  accountId      String
+  account        FtmoSimAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  radarEventId   String
+  eventCreatedAt DateTime // original signal's createdAt, for ordering/audit
+
+  pair           String
+  direction      String?
+  session        String?
+  pattern        String?
+
+  realizedR      Float
+  riskAmount     Float
+  pnl            Float
+  balanceAfter   Float
+
+  appliedAt      DateTime @default(now())
+
+  @@index([accountId])
+  @@index([radarEventId])
 }

@@ -1307,6 +1307,43 @@ app.patch('/sweep/:id/outcome', async (req, res) => {
 // ?all=true still gets the full history if you want it.
 const STATS_BASELINE_SINCE = new Date('2026-07-10T00:19:39.000Z')
 
+// "Golden" — the strongest filters stacked together: Confirmed-only +
+// Sweep + Retest + a prime session + not a weak pair. This is the
+// authoritative definition (73.8% win rate / n=328 as of this build) -
+// shared by /sweep/stats and the FTMO sim job below so they can't drift
+// apart. NOTE: this intentionally does NOT mirror BOTFINAL.py's own
+// PRIME_SESSIONS constant, which uses "Asia Open" (dead/unreachable code
+// there - classify_time_window can only emit "Asia"). Real stored session
+// values are exactly: "Asia", "London Open", "London", "NY Open", "NY",
+// "NY Close", "Off-Hours" - this list reflects that.
+const GOLDEN_EVENT_TYPE = 'SWEEP_CONFIRMED'
+const GOLDEN_PATTERN = 'Sweep + Retest'
+const PRIME_SESSIONS = ['London Open', 'Asia', 'NY Open']
+const WEAK_PAIRS = ['SAND/USDT']
+
+function isGoldenRow (r) {
+  return (
+    r.eventType === GOLDEN_EVENT_TYPE &&
+    r.pattern === GOLDEN_PATTERN &&
+    PRIME_SESSIONS.includes(r.session) &&
+    !WEAK_PAIRS.includes(r.pair)
+  )
+}
+
+// R-multiple realized on a signal: -1R on a stop (by definition), or the
+// actual reward/risk ratio on a win. Null if entry/stop are missing or
+// degenerate (risk <= 0), or the outcome isn't a decided win/loss yet -
+// can't compute a multiple without a meaningful risk denominator. Shared
+// by /sweep/stats and the FTMO sim job below.
+function realizedR (r) {
+  if (r.outcome === 'STOPPED') return -1
+  if (r.outcome !== 'TP1_HIT' && r.outcome !== 'TP2_HIT') return null
+  if (r.entry == null || r.stop == null || r.outcomePrice == null) return null
+  const risk = Math.abs(r.entry - r.stop)
+  if (risk <= 0) return null
+  return Math.abs(r.outcomePrice - r.entry) / risk
+}
+
 // Aggregate signal-quality stats — hit rate broken down by event type,
 // pattern, and pair, so filter thresholds can be tuned against real outcomes
 // instead of guesswork.
@@ -1332,19 +1369,6 @@ app.get('/sweep/stats', async (req, res) => {
         outcomePrice: true
       }
     })
-
-    // R-multiple realized on this signal: -1R on a stop (by definition), or
-    // the actual reward/risk ratio on a win. Null if entry/stop are missing
-    // or degenerate (risk <= 0) - can't compute a multiple without a
-    // meaningful risk denominator.
-    function realizedR (r) {
-      if (r.outcome === 'STOPPED') return -1
-      if (r.outcome !== 'TP1_HIT' && r.outcome !== 'TP2_HIT') return null
-      if (r.entry == null || r.stop == null || r.outcomePrice == null) return null
-      const risk = Math.abs(r.entry - r.stop)
-      if (risk <= 0) return null
-      return Math.abs(r.outcomePrice - r.entry) / risk
-    }
 
     const CONFIDENCE_BUCKETS = [
       { label: '90-100%', min: 0.9, max: 1.01 },
@@ -1400,18 +1424,7 @@ app.get('/sweep/stats', async (req, res) => {
       )
     }
 
-    // "Golden" — the strongest filters stacked together, so you can see the
-    // actual combined win rate instead of eyeballing separate tables.
-    // Confirmed-only + Sweep + Retest + a prime session + not a weak pair.
-    const PRIME_SESSIONS = ['London Open', 'Asia', 'NY Open']
-    const WEAK_PAIRS = ['SAND/USDT']
-    const goldenRows = rows.filter(
-      r =>
-        r.eventType === 'SWEEP_CONFIRMED' &&
-        r.pattern === 'Sweep + Retest' &&
-        PRIME_SESSIONS.includes(r.session) &&
-        !WEAK_PAIRS.includes(r.pair)
-    )
+    const goldenRows = rows.filter(isGoldenRow)
 
     return res.json({
       ok: true,
@@ -1434,6 +1447,270 @@ app.get('/sweep/stats', async (req, res) => {
   } catch (err) {
     console.error('[STATS ERROR]', err.message)
     return res.status(500).json({ error: 'Failed to compute stats' })
+  }
+})
+
+// ---------------- FTMO SIMULATOR ----------------
+// Replays real RadarEvent outcomes (the golden filter's population, see
+// isGoldenRow/realizedR above) chronologically against a simulated $100k
+// FTMO-rules account. No broker involved - we already track a real
+// win/loss/R-multiple outcome for every signal, so there's no execution to
+// fake. When an attempt PASSES or FAILS, the next processed row opens a
+// fresh attempt automatically, mirroring a real trader buying the next
+// challenge - this is a running series, not a one-shot data point.
+//
+// Rule params mirror PROP_PRESETS.ftmo_like in src/App.jsx exactly.
+const FTMO_SIM_RULES = {
+  profitTargetPct: 0.1,
+  dailyLossPct: 0.05,
+  maxDrawdownPct: 0.1,
+  minTradingDays: 4,
+  riskPct: 0.01
+}
+const FTMO_SIM_START_BALANCE = 100000
+const FTMO_SIM_POLL_INTERVAL_MS = 60000
+
+function utcDateString (date) {
+  return new Date(date).toISOString().slice(0, 10) // YYYY-MM-DD
+}
+
+function newFtmoSimAccountData (attemptNumber, now) {
+  return {
+    attemptNumber,
+    startedAt: now,
+    status: 'ACTIVE',
+    startBalance: FTMO_SIM_START_BALANCE,
+    currentBalance: FTMO_SIM_START_BALANCE,
+    dayStartBalance: FTMO_SIM_START_BALANCE,
+    currentDay: utcDateString(now),
+    tradingDaysCount: 0,
+    lastTradingDay: null,
+    profitTargetPct: FTMO_SIM_RULES.profitTargetPct,
+    dailyLossPct: FTMO_SIM_RULES.dailyLossPct,
+    maxDrawdownPct: FTMO_SIM_RULES.maxDrawdownPct,
+    minTradingDays: FTMO_SIM_RULES.minTradingDays,
+    riskPct: FTMO_SIM_RULES.riskPct
+  }
+}
+
+// Pure function: applies one RadarEvent row's realized R to an in-memory
+// account snapshot. Takes plain objects only (no Prisma/DB coupling) so it
+// can be unit-tested with fixtures before trusting it against real data.
+function applyGoldenRowToAccount (account, row, realizedRValue) {
+  const eventDay = utcDateString(row.createdAt)
+
+  let { currentBalance, dayStartBalance, currentDay, tradingDaysCount, lastTradingDay } = account
+
+  if (eventDay !== currentDay) {
+    currentDay = eventDay
+    dayStartBalance = currentBalance
+  }
+  if (eventDay !== lastTradingDay) {
+    lastTradingDay = eventDay
+    tradingDaysCount += 1
+  }
+
+  const riskAmount = currentBalance * account.riskPct
+  const pnl = riskAmount * realizedRValue
+  const newBalance = currentBalance + pnl
+
+  const trade = {
+    pair: row.pair,
+    direction: row.directionBias || null,
+    session: row.session || null,
+    pattern: row.pattern || null,
+    realizedR: realizedRValue,
+    riskAmount,
+    pnl,
+    balanceAfter: newBalance
+  }
+
+  let status = 'ACTIVE'
+  let failReason = null
+
+  const dailyLoss = dayStartBalance - newBalance
+  const dailyLossLimit = dayStartBalance * account.dailyLossPct
+  const totalDrawdown = account.startBalance - newBalance
+  const maxDrawdownLimit = account.startBalance * account.maxDrawdownPct
+
+  if (dailyLossLimit > 0 && dailyLoss >= dailyLossLimit) {
+    status = 'FAILED'
+    failReason = `Daily loss ${dailyLoss.toFixed(2)} breached limit ${dailyLossLimit.toFixed(2)}`
+  } else if (maxDrawdownLimit > 0 && totalDrawdown >= maxDrawdownLimit) {
+    status = 'FAILED'
+    failReason = `Max drawdown ${totalDrawdown.toFixed(2)} breached limit ${maxDrawdownLimit.toFixed(2)}`
+  } else if (
+    newBalance >= account.startBalance * (1 + account.profitTargetPct) &&
+    tradingDaysCount >= account.minTradingDays
+  ) {
+    status = 'PASSED'
+  }
+
+  return {
+    updatedFields: {
+      currentBalance: newBalance,
+      dayStartBalance,
+      currentDay,
+      tradingDaysCount,
+      lastTradingDay,
+      status,
+      failReason,
+      endedAt: status !== 'ACTIVE' ? new Date() : null
+    },
+    trade
+  }
+}
+
+async function processFtmoSimTick () {
+  try {
+    let account = await prisma.ftmoSimAccount.findFirst({
+      where: { status: 'ACTIVE' },
+      orderBy: { attemptNumber: 'desc' }
+    })
+    if (!account) {
+      const last = await prisma.ftmoSimAccount.findFirst({
+        orderBy: { attemptNumber: 'desc' },
+        select: { attemptNumber: true }
+      })
+      account = await prisma.ftmoSimAccount.create({
+        data: newFtmoSimAccountData((last?.attemptNumber || 0) + 1, new Date())
+      })
+    }
+
+    const rows = await prisma.radarEvent.findMany({
+      where: {
+        outcome: { in: ['TP1_HIT', 'TP2_HIT', 'STOPPED'] },
+        shadow: false,
+        createdAt: { gte: STATS_BASELINE_SINCE },
+        ftmoAppliedAt: null,
+        eventType: GOLDEN_EVENT_TYPE,
+        pattern: GOLDEN_PATTERN,
+        session: { in: PRIME_SESSIONS },
+        pair: { notIn: WEAK_PAIRS }
+      },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        createdAt: true,
+        pair: true,
+        directionBias: true,
+        session: true,
+        pattern: true,
+        entry: true,
+        stop: true,
+        outcome: true,
+        outcomePrice: true
+      }
+    })
+
+    for (const row of rows) {
+      const rValue = realizedR(row)
+      if (rValue == null) {
+        // Shouldn't normally happen given the outcome filter above, but
+        // guard anyway - mark applied so it's never retried, just don't
+        // count it as a trade (mirrors /sweep/stats excluding unresolvable
+        // rows from its R-multiple math).
+        await prisma.radarEvent.update({
+          where: { id: row.id },
+          data: { ftmoAppliedAt: new Date() }
+        })
+        continue
+      }
+
+      const { updatedFields, trade } = applyGoldenRowToAccount(account, row, rValue)
+
+      await prisma.$transaction([
+        prisma.ftmoSimAccount.update({ where: { id: account.id }, data: updatedFields }),
+        prisma.ftmoSimTrade.create({
+          data: {
+            accountId: account.id,
+            radarEventId: row.id,
+            eventCreatedAt: row.createdAt,
+            ...trade
+          }
+        }),
+        prisma.radarEvent.update({
+          where: { id: row.id },
+          data: { ftmoAppliedAt: new Date() }
+        })
+      ])
+
+      account = { ...account, ...updatedFields }
+
+      if (updatedFields.status !== 'ACTIVE') {
+        // This attempt just closed - open a fresh one immediately so the
+        // next row (if any) has somewhere to apply.
+        account = await prisma.ftmoSimAccount.create({
+          data: newFtmoSimAccountData(account.attemptNumber + 1, new Date())
+        })
+      }
+    }
+  } catch (err) {
+    console.error('[FTMO SIM ERROR]', err.message)
+  }
+}
+
+setInterval(processFtmoSimTick, FTMO_SIM_POLL_INTERVAL_MS)
+processFtmoSimTick()
+
+// FTMO simulator status — current attempt's state plus a rollup across all
+// attempts and its recent trade log. No auth, matches /sweep/stats.
+app.get('/ftmo-sim/status', async (req, res) => {
+  try {
+    const current = await prisma.ftmoSimAccount.findFirst({
+      where: { status: 'ACTIVE' },
+      orderBy: { attemptNumber: 'desc' }
+    })
+
+    const allAccounts = await prisma.ftmoSimAccount.findMany({
+      select: { status: true, startedAt: true, endedAt: true, attemptNumber: true }
+    })
+    const passed = allAccounts.filter(a => a.status === 'PASSED')
+    const failed = allAccounts.filter(a => a.status === 'FAILED')
+    function avgDays (list) {
+      const durations = list
+        .filter(a => a.endedAt)
+        .map(a => (new Date(a.endedAt) - new Date(a.startedAt)) / 86400000)
+      return durations.length
+        ? Number((durations.reduce((a, b) => a + b, 0) / durations.length).toFixed(1))
+        : null
+    }
+
+    const recentTrades = await prisma.ftmoSimTrade.findMany({
+      orderBy: { eventCreatedAt: 'desc' },
+      take: 25,
+      select: {
+        pair: true, direction: true, session: true, pattern: true,
+        realizedR: true, pnl: true, balanceAfter: true, eventCreatedAt: true,
+        accountId: true
+      }
+    })
+
+    return res.json({
+      ok: true,
+      current: current
+        ? {
+            attemptNumber: current.attemptNumber,
+            startedAt: current.startedAt,
+            startBalance: current.startBalance,
+            currentBalance: current.currentBalance,
+            profitTargetBalance: current.startBalance * (1 + current.profitTargetPct),
+            dailyLossFloor: current.dayStartBalance * (1 - current.dailyLossPct),
+            maxDrawdownFloor: current.startBalance * (1 - current.maxDrawdownPct),
+            tradingDaysCount: current.tradingDaysCount,
+            minTradingDays: current.minTradingDays
+          }
+        : null,
+      totalAttempts: allAccounts.length,
+      passedCount: passed.length,
+      failedCount: failed.length,
+      avgDaysToPass: avgDays(passed),
+      avgDaysToFail: avgDays(failed),
+      recentTrades
+    })
+  } catch (err) {
+    console.error('[FTMO SIM STATUS ERROR]', err.message)
+    return res.status(500).json({ error: 'Failed to compute FTMO sim status' })
   }
 })
 
