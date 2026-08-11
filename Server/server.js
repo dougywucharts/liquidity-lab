@@ -1561,33 +1561,77 @@ function applyGoldenRowToAccount (account, row, realizedRValue) {
   }
 }
 
-// A full backfill pass over hundreds of rows can take longer than the
-// interval between ticks (each row does an awaited transaction) -
-// setInterval does NOT wait for an async callback to finish before firing
-// the next one, so without this guard overlapping ticks race on the same
-// account and double-apply rows. Confirmed this actually happened during
-// the first deploy (140 duplicate radarEventId groups) before this guard
-// was added - don't remove it.
-let ftmoSimTickRunning = false
+// Correctness here needs to survive TWO kinds of concurrency, not just one:
+// (a) a single process's own overlapping setInterval ticks, if one backfill
+//     pass takes longer than the interval, and
+// (b) two SEPARATE processes briefly running at once during a Render
+//     rolling deploy (old instance still finishing while the new one
+//     boots) - an in-memory flag can't protect against that, only a
+//     database-level lock can.
+// Confirmed (b) actually happened on the first deploy: 140 duplicate
+// radarEventId groups even after adding an in-memory guard, because the
+// dying old-code instance kept running its own unguarded loop in parallel
+// with the new instance. Also, the DB connection here is Neon's pooled
+// endpoint (PgBouncer transaction-pooling) - a session-scoped
+// pg_advisory_lock can silently misbehave across pooled connections, so
+// everything below uses pg_advisory_XACT_lock, which is tied to a single
+// transaction and is safe under pooling since a transaction never hops
+// connections mid-flight.
+const FTMO_SIM_LOCK_KEY = 918273645
+let ftmoSimTickRunning = false // cheap same-process fast path only
+
+// Atomically claims one RadarEvent row (no-op if another process already
+// claimed it), then applies it to whichever account is currently ACTIVE -
+// creating a fresh $100k attempt first if the previous one just closed.
+// Everything happens inside one transaction serialized by the advisory
+// lock, so two processes can never read-modify-write the same account
+// balance from stale data.
+async function applyRowToActiveFtmoAccount (row, realizedRValue) {
+  return prisma.$transaction(async tx => {
+    const claimed = await tx.radarEvent.updateMany({
+      where: { id: row.id, ftmoAppliedAt: null },
+      data: { ftmoAppliedAt: new Date() }
+    })
+    if (claimed.count === 0) return null // already applied elsewhere - skip
+
+    // $executeRaw (not $queryRaw) - pg_advisory_xact_lock returns void,
+    // which $queryRaw can't deserialize into a result row.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${FTMO_SIM_LOCK_KEY})`
+
+    let account = await tx.ftmoSimAccount.findFirst({
+      where: { status: 'ACTIVE' },
+      orderBy: { attemptNumber: 'desc' }
+    })
+    if (!account) {
+      const last = await tx.ftmoSimAccount.findFirst({
+        orderBy: { attemptNumber: 'desc' },
+        select: { attemptNumber: true }
+      })
+      account = await tx.ftmoSimAccount.create({
+        data: newFtmoSimAccountData((last?.attemptNumber || 0) + 1, new Date())
+      })
+    }
+
+    const { updatedFields, trade } = applyGoldenRowToAccount(account, row, realizedRValue)
+
+    await tx.ftmoSimAccount.update({ where: { id: account.id }, data: updatedFields })
+    await tx.ftmoSimTrade.create({
+      data: {
+        accountId: account.id,
+        radarEventId: row.id,
+        eventCreatedAt: row.createdAt,
+        ...trade
+      }
+    })
+
+    return updatedFields
+  })
+}
 
 async function processFtmoSimTick () {
   if (ftmoSimTickRunning) return
   ftmoSimTickRunning = true
   try {
-    let account = await prisma.ftmoSimAccount.findFirst({
-      where: { status: 'ACTIVE' },
-      orderBy: { attemptNumber: 'desc' }
-    })
-    if (!account) {
-      const last = await prisma.ftmoSimAccount.findFirst({
-        orderBy: { attemptNumber: 'desc' },
-        select: { attemptNumber: true }
-      })
-      account = await prisma.ftmoSimAccount.create({
-        data: newFtmoSimAccountData((last?.attemptNumber || 0) + 1, new Date())
-      })
-    }
-
     const rows = await prisma.radarEvent.findMany({
       where: {
         outcome: { in: ['TP1_HIT', 'TP2_HIT', 'STOPPED'] },
@@ -1621,40 +1665,16 @@ async function processFtmoSimTick () {
         // guard anyway - mark applied so it's never retried, just don't
         // count it as a trade (mirrors /sweep/stats excluding unresolvable
         // rows from its R-multiple math).
-        await prisma.radarEvent.update({
-          where: { id: row.id },
+        await prisma.radarEvent.updateMany({
+          where: { id: row.id, ftmoAppliedAt: null },
           data: { ftmoAppliedAt: new Date() }
         })
         continue
       }
 
-      const { updatedFields, trade } = applyGoldenRowToAccount(account, row, rValue)
-
-      await prisma.$transaction([
-        prisma.ftmoSimAccount.update({ where: { id: account.id }, data: updatedFields }),
-        prisma.ftmoSimTrade.create({
-          data: {
-            accountId: account.id,
-            radarEventId: row.id,
-            eventCreatedAt: row.createdAt,
-            ...trade
-          }
-        }),
-        prisma.radarEvent.update({
-          where: { id: row.id },
-          data: { ftmoAppliedAt: new Date() }
-        })
-      ])
-
-      account = { ...account, ...updatedFields }
-
-      if (updatedFields.status !== 'ACTIVE') {
-        // This attempt just closed - open a fresh one immediately so the
-        // next row (if any) has somewhere to apply.
-        account = await prisma.ftmoSimAccount.create({
-          data: newFtmoSimAccountData(account.attemptNumber + 1, new Date())
-        })
-      }
+      // Sequential on purpose - each row's outcome depends on the account
+      // state left by the one before it (path-dependent balance replay).
+      await applyRowToActiveFtmoAccount(row, rValue)
     }
   } catch (err) {
     console.error('[FTMO SIM ERROR]', err.message)
