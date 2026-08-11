@@ -1561,7 +1561,18 @@ function applyGoldenRowToAccount (account, row, realizedRValue) {
   }
 }
 
+// A full backfill pass over hundreds of rows can take longer than the
+// interval between ticks (each row does an awaited transaction) -
+// setInterval does NOT wait for an async callback to finish before firing
+// the next one, so without this guard overlapping ticks race on the same
+// account and double-apply rows. Confirmed this actually happened during
+// the first deploy (140 duplicate radarEventId groups) before this guard
+// was added - don't remove it.
+let ftmoSimTickRunning = false
+
 async function processFtmoSimTick () {
+  if (ftmoSimTickRunning) return
+  ftmoSimTickRunning = true
   try {
     let account = await prisma.ftmoSimAccount.findFirst({
       where: { status: 'ACTIVE' },
@@ -1647,6 +1658,8 @@ async function processFtmoSimTick () {
     }
   } catch (err) {
     console.error('[FTMO SIM ERROR]', err.message)
+  } finally {
+    ftmoSimTickRunning = false
   }
 }
 
