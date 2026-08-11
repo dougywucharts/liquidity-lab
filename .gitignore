@@ -14,5 +14,6 @@ build/
 Server/logs/
 *.csv
 FTMOBridge/logs/
+BlofinBridge/logs/
 __pycache__/
 *.pyc
