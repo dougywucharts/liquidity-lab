@@ -74,7 +74,7 @@ TRADE_LOG_FIELDS = [
 GOLDEN_EVENT_TYPE = "SWEEP_CONFIRMED"
 GOLDEN_PATTERN = "Sweep + Retest"
 GOLDEN_SESSIONS = {"London Open", "Asia", "NY Open"}
-GOLDEN_EXCLUDE_PAIRS = {"SAND/USDT"}
+GOLDEN_EXCLUDE_PAIRS = {"SAND/USDT", "SEI/USDT", "APT/USDT"}
 
 # Only pairs confirmed on FTMO's crypto CFD list. VERIFY the exact symbol
 # strings against your own demo account's Market Watch before trusting

@@ -179,7 +179,7 @@ WEAK_PATTERNS = {"Hook", "Sweep Watch"}
 # positive with smaller samples, so left alone for now rather than cutting
 # several pairs on one pass. Same shadow-tracking as everything else here —
 # still posted and tracked for outcome, just not shown live.
-WEAK_PAIRS = {"SAND/USDT"}
+WEAK_PAIRS = {"SAND/USDT", "SEI/USDT", "APT/USDT"}
 
 # London is the genuine laggard (41.0%, +0.33R, n=1996) - worth cutting for
 # a modest volume cost. Off-Hours (42.6%, +0.39R, n=5965) was cut here too

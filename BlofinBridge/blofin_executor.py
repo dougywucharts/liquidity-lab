@@ -25,6 +25,7 @@ import csv
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -46,9 +47,24 @@ BLOFIN_API_KEY = os.getenv("BLOFIN_API_KEY", "")
 BLOFIN_API_SECRET = os.getenv("BLOFIN_API_SECRET", "")
 BLOFIN_API_PASSWORD = os.getenv("BLOFIN_API_PASSWORD", "")
 
-# Real order sizing against BloFin's own demo balance - deliberately small
-# and independent of the $100k PF ledger below (see module docstring).
-DEMO_RISK_PCT = float(os.getenv("DEMO_RISK_PCT", "0.01"))
+# Real order sizing - a FIXED small dollar amount, deliberately NOT a
+# percentage of the demo balance. Originally was a percentage, but the
+# demo balance grew ~25x unexpectedly (from ~$4k to ~$100k) partway
+# through, which silently scaled risk-per-trade from ~$40 to ~$1000 and
+# produced contract counts in the millions for low-priced/tight-stop pairs
+# - exceeded BloFin's own max order size limit repeatedly. A fixed dollar
+# figure keeps every real order small and bounded regardless of whatever
+# the demo balance happens to be - the whole point of this bridge (proving
+# the pipeline + rough price realism) never needed order size to track
+# balance at all; only the separate $100k PF ledger below does that.
+DEMO_RISK_AMOUNT_USD = float(os.getenv("DEMO_RISK_AMOUNT_USD", "25"))
+
+# Skip any signal whose entry/stop/tp1 levels are this stale by the time
+# we'd actually place the order - if the executor was down or backlogged,
+# price may have already moved past the intended take-profit, which
+# BloFin's API rejects outright (confirmed live: "take profit trigger
+# price should be lower/higher than the best bid/ask price").
+MAX_SIGNAL_AGE_SECONDS = int(os.getenv("MAX_SIGNAL_AGE_SECONDS", "300"))
 
 # The $100k virtual ledger's rules - matches PROP_PRESETS.ftmo_like in
 # src/App.jsx and the FTMO simulator in Server/server.js exactly. Run as
@@ -97,7 +113,18 @@ PF_LEDGER_TRADE_FIELDS = [
 GOLDEN_EVENT_TYPE = "SWEEP_CONFIRMED"
 GOLDEN_PATTERN = "Sweep + Retest"
 GOLDEN_SESSIONS = {"London Open", "Asia", "NY Open"}
-GOLDEN_EXCLUDE_PAIRS = {"SAND/USDT"}
+GOLDEN_EXCLUDE_PAIRS = {"SAND/USDT", "SEI/USDT", "APT/USDT"}
+
+# Pairs excluded here for demo EXECUTION quality, not signal quality - kept
+# separate from GOLDEN_EXCLUDE_PAIRS/is_golden on purpose, since these are
+# fine signals that just aren't safe to trade on BloFin's thin demo
+# liquidity. CRV/STX confirmed earlier to have spreads 2-10x wider in demo
+# than live. KAS confirmed directly: its sub-cent price means even a small
+# $25 risk needs ~300k contracts, and dumping that into a thin demo order
+# book produced a visible self-inflicted wick on the chart (order execution
+# markers landing right at the spike) - on top of being the pair where the
+# SL/TP silent-attach-failure incident happened.
+THIN_DEMO_LIQUIDITY_PAIRS = {"KAS/USDT", "CRV/USDT", "STX/USDT"}
 
 
 def is_golden(event: dict) -> bool:
@@ -120,18 +147,20 @@ def map_symbol(pair: str) -> str:
 def compute_contract_size(
     entry: float,
     stop: float,
-    demo_balance: float,
-    risk_pct: float,
+    risk_amount: float,
     contract_size: float,
     amount_step: float,
     min_amount: float,
 ) -> float:
     """
     Position size (in ccxt "amount"/contracts) for the REAL demo order,
-    sized against BloFin's own demo balance - independent of the $100k PF
-    ledger, which only ever consumes the resulting realized R-multiple.
+    sized against a FIXED dollar risk amount - deliberately NOT a function
+    of the demo account's balance (see DEMO_RISK_AMOUNT_USD's comment for
+    why: balance-relative sizing silently produced million-contract orders
+    once the demo balance grew unexpectedly). Independent either way of the
+    $100k PF ledger, which only ever consumes the resulting realized
+    R-multiple, never this position's actual dollar size.
 
-      risk_amount = demo_balance * risk_pct
       price_distance = |entry - stop|
       risk_per_contract = price_distance * contract_size
       raw_contracts = risk_amount / risk_per_contract
@@ -146,7 +175,6 @@ def compute_contract_size(
     if price_distance <= 0:
         raise ValueError("entry and stop cannot be equal")
 
-    risk_amount = demo_balance * risk_pct
     risk_per_contract = price_distance * contract_size
     raw_contracts = risk_amount / risk_per_contract
 
@@ -154,6 +182,41 @@ def compute_contract_size(
     rounded = int(steps) * amount_step  # round down (floor)
     contracts = max(rounded, min_amount)
     return contracts
+
+
+def compute_adjusted_sl_tp(
+    real_entry: float,
+    intended_entry: float,
+    intended_stop: float,
+    intended_tp: float,
+    direction: str,
+) -> tuple[float, float]:
+    """
+    Re-anchors SL/TP to the REAL fill price instead of the signal's
+    intended entry, preserving the exact original risk distance and R:R
+    ratio regardless of market-order slippage.
+
+    Found live (2026-08-12) that placing SL/TP at the signal's fixed
+    absolute price levels (the original approach) silently distorts the
+    real risk/reward whenever the market-order fill differs from the
+    intended entry - confirmed on a real STX/USDT trade where slippage
+    turned an intended ~2:1 R:R into an actual ~0.67:1 R:R, because the
+    stop/tp stayed pinned to fixed prices while the entry point moved.
+
+    Fix: keep the same PRICE DISTANCE to stop and to tp as the signal
+    intended (which is what compute_contract_size's sizing was already
+    based on, so the dollar risk stays correct too), just measured from
+    where the order actually filled instead of where it was expected to.
+    """
+    stop_distance = abs(intended_entry - intended_stop)
+    tp_distance = abs(intended_tp - intended_entry)
+    if direction == "Long":
+        new_stop = real_entry - stop_distance
+        new_tp = real_entry + tp_distance
+    else:
+        new_stop = real_entry + stop_distance
+        new_tp = real_entry - tp_distance
+    return new_stop, new_tp
 
 
 def realized_r(entry: float, stop: float, close_price: float, direction: str) -> float | None:
@@ -353,6 +416,68 @@ def fetch_events() -> list[dict]:
         return []
 
 
+# ---------------- EXCHANGE I/O (not pure - needs a live connection) ----------------
+
+def get_real_entry_price(exchange, symbol: str, retries: int = 6, delay: float = 1.0):
+    """
+    Poll for the actual average entry price of a just-placed market order's
+    resulting position. Necessary because fetch_positions can briefly lag
+    right after a fill - the same propagation delay that caused the
+    close-detection race condition found earlier. Returns None (caller
+    should fall back to the intended entry) if it never shows up.
+    """
+    for _ in range(retries):
+        positions = exchange.fetch_positions([symbol])
+        for p in positions:
+            if abs(p.get("contracts") or 0) > 0 and p.get("entryPrice"):
+                return p["entryPrice"]
+        time.sleep(delay)
+    return None
+
+
+def attach_sl_tp(exchange, symbol: str, market: dict, direction: str, contracts: float, stop: float, tp: float) -> None:
+    """
+    Attaches BOTH stop-loss and take-profit to an existing position via
+    BloFin's dedicated TPSL endpoint, called directly (bypassing ccxt's
+    createTpslOrder convenience wrapper) because that wrapper only accepts
+    ONE of stopLossPrice/takeProfitPrice per call (an `elif`, not both) -
+    confirmed by reading its source - even though BloFin's actual API
+    accepts both together in one record (confirmed via the raw
+    orders-tpsl-pending response). This request shape mirrors exactly what
+    a successful atomic order-creation call sends, verified live earlier.
+    """
+    closing_side = "sell" if direction == "Long" else "buy"
+    exchange.privatePostTradeOrderTpsl({
+        "instId": market["id"],
+        "side": closing_side,
+        "positionSide": "net",
+        "marginMode": "cross",
+        "size": exchange.amount_to_precision(symbol, contracts),
+        "slTriggerPrice": exchange.price_to_precision(symbol, stop),
+        "slOrderPrice": "-1",
+        "tpTriggerPrice": exchange.price_to_precision(symbol, tp),
+        "tpOrderPrice": "-1",
+        "reduceOnly": "true",
+    })
+
+
+def sl_tp_is_live(exchange, market: dict) -> bool:
+    """
+    Confirms a TPSL order actually exists server-side for this instrument,
+    rather than trusting attach_sl_tp's absence of a thrown exception.
+    Necessary because a real incident showed BloFin can return a
+    200/no-exception response from the TPSL endpoint without the order
+    actually being created - the KAS/USDT position on 2026-08-15 sat fully
+    unprotected for over a day (confirmed via this exact endpoint returning
+    an empty list) and ran to -55R before being manually closed, wrecking
+    every PF ledger in the process. "No exception" is not sufficient
+    evidence of protection.
+    """
+    resp = exchange.privateGetTradeOrdersTpslPending()
+    orders = resp.get("data", [])
+    return any(o.get("instId") == market["id"] for o in orders)
+
+
 # ---------------- MAIN LOOP ----------------
 
 async def run():
@@ -399,8 +524,22 @@ async def run():
                 if not is_golden(event):
                     continue
 
+                if event.get("pair") in THIN_DEMO_LIQUIDITY_PAIRS:
+                    log.info(f"Skipping {event_id} - {event.get('pair')} excluded for thin demo liquidity")
+                    seen_events.add(event_id)
+                    save_seen_events(seen_events)
+                    continue
+
                 seen_events.add(event_id)
                 save_seen_events(seen_events)
+
+                timestamp_utc = event.get("timestampUtc")
+                if timestamp_utc:
+                    event_time = datetime.fromisoformat(timestamp_utc.replace("Z", "+00:00"))
+                    age_seconds = (datetime.now(timezone.utc) - event_time).total_seconds()
+                    if age_seconds > MAX_SIGNAL_AGE_SECONDS:
+                        log.info(f"Skipping {event_id} - stale ({age_seconds:.0f}s old, entry/tp1 may no longer be valid)")
+                        continue
 
                 pair = event.get("pair")
                 symbol = map_symbol(pair)
@@ -416,16 +555,10 @@ async def run():
                     log.warning(f"Skipping {event_id} - missing entry/stop/tp1")
                     continue
 
-                balance = exchange.fetch_balance()
-                demo_equity = balance.get("USDT", {}).get("total") or balance.get("total", {}).get("USDT")
-                if not demo_equity:
-                    log.warning(f"Skipping {event_id} - couldn't read demo USDT balance")
-                    continue
-
                 market = exchange.markets[symbol]
                 try:
                     contracts = compute_contract_size(
-                        entry, stop, demo_equity, DEMO_RISK_PCT,
+                        entry, stop, DEMO_RISK_AMOUNT_USD,
                         market["contractSize"], market["precision"]["amount"],
                         market["limits"]["amount"]["min"],
                     )
@@ -439,14 +572,69 @@ async def run():
                     f"entry={entry} stop={stop} tp1={tp1} contracts={contracts}"
                 )
 
-                order = exchange.create_order(
-                    symbol, "market", side, contracts,
-                    params={
-                        "stopLoss": {"triggerPrice": stop},
-                        "takeProfit": {"triggerPrice": tp1},
-                    },
-                )
+                # Placed WITHOUT SL/TP attached - market orders can slip
+                # from the intended entry, and if SL/TP were pinned to the
+                # signal's fixed absolute prices (the original approach),
+                # that slippage silently distorts the real risk/reward.
+                # Confirmed live on a real trade: an intended ~2:1 R:R
+                # became ~0.67:1 purely from entry slippage. Instead: fill
+                # first, read the REAL average entry, then attach SL/TP
+                # re-anchored to it (see compute_adjusted_sl_tp).
+                order = exchange.create_order(symbol, "market", side, contracts)
                 order_id = order.get("id")
+
+                real_entry = get_real_entry_price(exchange, symbol)
+                if real_entry is None:
+                    log.warning(
+                        f"{event_id} - couldn't confirm real fill price after retries, "
+                        f"falling back to intended SL/TP (may not reflect actual entry)"
+                    )
+                    real_entry, actual_stop, actual_tp = entry, stop, tp1
+                else:
+                    actual_stop, actual_tp = compute_adjusted_sl_tp(real_entry, entry, stop, tp1, direction)
+                    log.info(
+                        f"Real fill: {real_entry} (intended {entry}) -> "
+                        f"adjusted SL={actual_stop:.8f} TP={actual_tp:.8f}"
+                    )
+
+                protected = False
+                for attempt in range(2):
+                    try:
+                        attach_sl_tp(exchange, symbol, market, direction, contracts, actual_stop, actual_tp)
+                    except Exception as e:
+                        log.error(
+                            f"attach_sl_tp call raised on attempt {attempt + 1} for "
+                            f"{event_id} ({order_id}): {e}"
+                        )
+                    time.sleep(1.0)
+                    if sl_tp_is_live(exchange, market):
+                        protected = True
+                        break
+                    log.error(
+                        f"SL/TP attach did not verify on attempt {attempt + 1} for "
+                        f"{event_id} ({order_id}) - no thrown exception, but no TPSL "
+                        f"order actually exists server-side."
+                    )
+
+                if not protected:
+                    log.error(
+                        f"{event_id} ({order_id}) still UNPROTECTED after retry - "
+                        f"closing the position immediately rather than leaving it "
+                        f"naked (real incident: KAS/USDT 2026-08-15 ran to -55R "
+                        f"unprotected before being caught)."
+                    )
+                    try:
+                        close_side = "sell" if direction == "Long" else "buy"
+                        exchange.create_order(
+                            symbol, "market", close_side, contracts,
+                            params={"reduceOnly": True},
+                        )
+                        log.error(f"{event_id} ({order_id}) closed as unprotected-safety fallback.")
+                    except Exception as e:
+                        log.error(
+                            f"FAILED to close unprotected position for {event_id} "
+                            f"({order_id}) - manual intervention required: {e}"
+                        )
 
                 append_trade_log({
                     "logged_at": datetime.now(timezone.utc).isoformat(),
@@ -454,31 +642,58 @@ async def run():
                     "pair": pair,
                     "blofin_symbol": symbol,
                     "direction": direction,
-                    "entry": entry,
-                    "stop": stop,
-                    "tp1": tp1,
+                    "entry": real_entry,
+                    "stop": actual_stop,
+                    "tp1": actual_tp,
                     "contracts": contracts,
-                    "risk_amount_demo": round(demo_equity * DEMO_RISK_PCT, 4),
+                    "risk_amount_demo": DEMO_RISK_AMOUNT_USD,
                     "order_id": order_id,
                     "status": "OPEN",
                 })
                 if order_id:
                     open_positions[order_id] = {
                         "event_id": event_id, "pair": pair, "symbol": symbol,
-                        "entry": entry, "stop": stop, "direction": direction,
+                        "entry": real_entry, "stop": actual_stop, "direction": direction,
                         "opened_at": datetime.now(timezone.utc).isoformat(),
                     }
                     save_open_positions(open_positions)
 
             # Periodically check open positions for closure.
+            #
+            # BUG FOUND LIVE (2026-08-12): this used to gate on
+            # `asyncio.get_event_loop().time() - last_position_check`, where
+            # `now` is monotonic time since the event loop started and
+            # `last_position_check` started at 0.0 - so the first check
+            # after ANY position opened fired almost immediately (the loop
+            # had already been running >60s), not after a real 60s wait.
+            # That alone wouldn't be fatal, but combined with BloFin's own
+            # API having a brief propagation delay before a JUST-placed
+            # order shows up in fetch_positions(), it produced a false
+            # "not in the live list = must be closed" verdict on a position
+            # that had only existed for 0.45 seconds - it was never
+            # actually closed, the script just lost track of a real open
+            # position and silently dropped its eventual outcome. Confirmed
+            # via BloFin's raw trade history after the fact.
+            #
+            # Fix: only ever consider a position eligible for closure
+            # detection once it's been open for a minimum buffer - a
+            # position that young genuinely cannot have both opened AND had
+            # its SL/TP trigger in that window, so there's no legitimate
+            # reason to check it yet.
+            MIN_POSITION_AGE_SECONDS = 30
+            now_utc = datetime.now(timezone.utc)
+            eligible = {
+                oid: meta for oid, meta in open_positions.items()
+                if (now_utc - datetime.fromisoformat(meta["opened_at"])).total_seconds() >= MIN_POSITION_AGE_SECONDS
+            }
             now = asyncio.get_event_loop().time()
-            if open_positions and now - last_position_check > POSITION_POLL_INTERVAL_SECONDS:
+            if eligible and now - last_position_check > POSITION_POLL_INTERVAL_SECONDS:
                 last_position_check = now
                 live_positions = exchange.fetch_positions()
                 live_symbols_open = {p["symbol"] for p in live_positions if abs(p.get("contracts") or 0) > 0}
 
                 closed_ids = [
-                    oid for oid, meta in open_positions.items()
+                    oid for oid, meta in eligible.items()
                     if meta["symbol"] not in live_symbols_open
                 ]
                 for oid in closed_ids:

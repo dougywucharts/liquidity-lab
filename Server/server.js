@@ -1319,7 +1319,7 @@ const STATS_BASELINE_SINCE = new Date('2026-07-10T00:19:39.000Z')
 const GOLDEN_EVENT_TYPE = 'SWEEP_CONFIRMED'
 const GOLDEN_PATTERN = 'Sweep + Retest'
 const PRIME_SESSIONS = ['London Open', 'Asia', 'NY Open']
-const WEAK_PAIRS = ['SAND/USDT']
+const WEAK_PAIRS = ['SAND/USDT', 'SEI/USDT', 'APT/USDT']
 
 function isGoldenRow (r) {
   return (
@@ -1436,7 +1436,7 @@ app.get('/sweep/stats', async (req, res) => {
       overall: summarize(rows),
       golden: {
         ...summarize(goldenRows),
-        criteria: 'SWEEP_CONFIRMED + Sweep + Retest + London Open/Asia/NY Open, excluding SAND/USDT'
+        criteria: 'SWEEP_CONFIRMED + Sweep + Retest + London Open/Asia/NY Open, excluding SAND/USDT, SEI/USDT, APT/USDT'
       },
       byEventType: groupBy(rows, 'eventType'),
       byPattern: groupBy(rows, 'pattern'),

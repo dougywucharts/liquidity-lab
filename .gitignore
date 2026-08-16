@@ -15,5 +15,6 @@ Server/logs/
 *.csv
 FTMOBridge/logs/
 BlofinBridge/logs/
+CFTTracker/cft_state.json
 __pycache__/
 *.pyc

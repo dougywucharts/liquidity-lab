@@ -2,20 +2,12 @@
 echo ===============================
 echo   LIQUIDITY LAB STARTING...
 echo ===============================
-
-:: Start API Server
+:: Start Local API Server (dev only)
 echo Starting API...
-start cmd /k "cd /d C:\Dev\liquidity-lab\server && node server.js"
-
-:: Start Frontend (Vite)
-echo Starting Frontend...
-start cmd /k "cd /d C:\Dev\liquidity-lab\client && npm run dev"
-
-:: Start Python Bot
-echo Starting Bot...
-start cmd /k "cd /d C:\Dev\liquidity-lab\server && python BOTFINAL.py"
-
+start cmd /k "cd /d C:\Dev\liquidity-lab\Server && node server.js"
 echo ===============================
-echo   ALL SYSTEMS LAUNCHED 🚀
+echo   API LAUNCHED
+echo   Bot managed by PM2
+echo   Frontend on Vercel
 echo ===============================
 pause
