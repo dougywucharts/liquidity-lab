@@ -653,7 +653,8 @@ async def run():
                 if order_id:
                     open_positions[order_id] = {
                         "event_id": event_id, "pair": pair, "symbol": symbol,
-                        "entry": real_entry, "stop": actual_stop, "direction": direction,
+                        "entry": real_entry, "stop": actual_stop, "tp": actual_tp,
+                        "contracts": contracts, "direction": direction,
                         "opened_at": datetime.now(timezone.utc).isoformat(),
                     }
                     save_open_positions(open_positions)
@@ -764,6 +765,54 @@ async def run():
                         "closed_at": closed_at.isoformat(),
                     })
                 save_open_positions(open_positions)
+
+                # Watchdog: the KAS/USDT incident showed protection can be
+                # missing without ever throwing an exception, and the
+                # verify-after-attach check alone only catches that at the
+                # moment a position is opened. This re-checks every position
+                # STILL open on every poll cycle, so a TPSL that vanishes or
+                # never truly attached gets caught within one poll interval
+                # instead of sitting naked until a human happens to notice.
+                still_open_ids = [oid for oid in eligible if oid not in closed_ids]
+                for oid in still_open_ids:
+                    meta = open_positions[oid]
+                    market = exchange.market(meta["symbol"])
+                    if sl_tp_is_live(exchange, market):
+                        continue
+
+                    log.error(
+                        f"WATCHDOG: {meta['event_id']} ({oid}, {meta['pair']}) has "
+                        f"NO live TPSL order despite being open - re-attaching."
+                    )
+                    protected = False
+                    for attempt in range(2):
+                        try:
+                            attach_sl_tp(
+                                exchange, meta["symbol"], market, meta["direction"],
+                                meta["contracts"], meta["stop"], meta["tp"],
+                            )
+                        except Exception as e:
+                            log.error(f"WATCHDOG re-attach raised on attempt {attempt + 1} for {oid}: {e}")
+                        time.sleep(1.0)
+                        if sl_tp_is_live(exchange, market):
+                            protected = True
+                            log.info(f"WATCHDOG: {oid} re-protected successfully.")
+                            break
+
+                    if not protected:
+                        log.error(
+                            f"WATCHDOG: {oid} still unprotected after retry - "
+                            f"closing as safety fallback."
+                        )
+                        try:
+                            close_side = "sell" if meta["direction"] == "Long" else "buy"
+                            exchange.create_order(
+                                meta["symbol"], "market", close_side, meta["contracts"],
+                                params={"reduceOnly": True},
+                            )
+                            log.error(f"WATCHDOG: {oid} closed as unprotected-safety fallback.")
+                        except Exception as e:
+                            log.error(f"WATCHDOG: FAILED to close unprotected {oid} - manual intervention required: {e}")
 
         except Exception as e:
             log.error(f"Loop error: {e}")
