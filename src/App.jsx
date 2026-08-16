@@ -230,6 +230,23 @@ function minutesAgo(ts) {
   return `${days}d ago`;
 }
 
+// Compact "5:11 PM local · 21:11 UTC" pairing — the relative "6m ago" text
+// alone doesn't anchor to a clock, and the session labels (NY/London/Asia)
+// don't help unless you already know the UTC offset. Showing both removes
+// the mental math.
+function formatLocalAndUtc(ts) {
+  const d = parseEventDate(ts);
+  if (!d) return "—";
+  const local = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const utc = d.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
+  });
+  return `${local} local · ${utc} UTC`;
+}
+
 function num(v, digits = 3) {
   const n = Number(v);
   return Number.isFinite(n) ? n.toFixed(digits) : "—";
@@ -1112,11 +1129,58 @@ function SessionClockWidget() {
     return hour >= openHour || hour < closeHour;
   }
 
+  const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const localDisplay = formatMilitary(new Date(now), localTimeZone);
+
   return (
     <div
-      style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}
+      style={{ display: "grid", gap: 10 }}
       className="llab-session-clocks"
     >
+      <div
+        style={{
+          borderRadius: 18,
+          padding: "10px 16px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          border: `1px solid ${palette.border}`,
+          background: palette.card,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 10,
+            color: palette.textDim,
+            textTransform: "uppercase",
+            letterSpacing: 1.2,
+            fontWeight: 800,
+          }}
+        >
+          Your local time
+        </div>
+        <div
+          style={{
+            fontSize: 18,
+            fontWeight: 900,
+            letterSpacing: 1,
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          {localDisplay}
+          <span
+            style={{
+              fontSize: 10,
+              color: palette.textDim,
+              marginLeft: 8,
+              opacity: 0.7,
+            }}
+          >
+            {localTimeZone}
+          </span>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
       {sessions.map((session) => {
         const display = formatMilitary(new Date(now), session.timeZone);
         const localHour = Number(
@@ -1208,6 +1272,7 @@ function SessionClockWidget() {
           </div>
         );
       })}
+      </div>
     </div>
   );
 }
@@ -4382,7 +4447,8 @@ export default function AppPreBeta() {
                           </div>
                           <div style={{ fontSize: 9, color: palette.textDim }}>
                             {wave.events?.length || 1}× ·{" "}
-                            {minutesAgo(wave.events?.[0]?.timestampUtc)}
+                            {minutesAgo(wave.events?.[0]?.timestampUtc)} ·{" "}
+                            {formatLocalAndUtc(wave.events?.[0]?.timestampUtc)}
                           </div>
                           {isConfirmedStage && (
                             <div
