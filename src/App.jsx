@@ -4240,9 +4240,15 @@ export default function AppPreBeta() {
                   // this bot's own outcome data (65%+ win rate, +1.19R avg,
                   // far ahead of every other pattern) — worth visually flagging.
                   // Only eligible once confirmed, same reasoning as above.
+                  // Must mirror server.js's isGoldenRow/WEAK_PAIRS exactly —
+                  // this badge previously only checked eventType+pattern,
+                  // so it lit up on signals (e.g. wrong session) that no
+                  // executor would ever actually trade.
                   const isGolden =
                     isConfirmedStage &&
-                    wave.events?.[0]?.pattern === "Sweep + Retest";
+                    wave.events?.[0]?.pattern === "Sweep + Retest" &&
+                    ["London Open", "Asia", "NY Open"].includes(wave.session) &&
+                    !["SAND/USDT", "SEI/USDT", "APT/USDT"].includes(wave.pair);
                   return (
                     <div
                       key={wave.key}
