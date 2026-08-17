@@ -1075,6 +1075,70 @@ function SmartTicker({ items, onSelect }) {
   );
 }
 
+// ─── GoldenSignalCard ─────────────────────────────────────────────────────────
+// Surfaces the bot's own golden-filter win rate on the main dashboard - this
+// was previously only visible on the separate "Signal Quality" tab, buried a
+// click away from where the trade decision actually happens. Same /sweep/stats
+// endpoint SignalStats.jsx already uses, just a compact glanceable version.
+
+function GoldenSignalCard({ onOpenStats }) {
+  const [golden, setGolden] = useState(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${API_BASE}/sweep/stats`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) setGolden(data?.golden || null);
+      })
+      .catch(() => {
+        if (!cancelled) setError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const winRate = golden?.winRate;
+  const color =
+    winRate == null
+      ? palette.textDim
+      : winRate >= 60
+        ? palette.long
+        : winRate >= 45
+          ? "#f6c453"
+          : palette.short;
+
+  return (
+    <div
+      onClick={onOpenStats}
+      style={{
+        ...styles.statCard,
+        cursor: "pointer",
+        border: "1px solid rgba(246,196,83,0.28)",
+        background: "linear-gradient(180deg,rgba(24,20,8,0.9),rgba(10,9,4,0.9))",
+      }}
+      title="Golden filter: SWEEP_CONFIRMED + Sweep + Retest + a prime session, excluding weak pairs — click for the full breakdown"
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={styles.statLabel}>★ Golden Signal Win Rate</div>
+        <span style={{ fontSize: 9, color: palette.textDim }}>All-time →</span>
+      </div>
+      {error ? (
+        <div style={{ ...styles.statValue, fontSize: 16, color: palette.textDim }}>—</div>
+      ) : winRate == null ? (
+        <div style={{ ...styles.statValue, fontSize: 16, color: palette.textDim }}>Loading…</div>
+      ) : (
+        <div style={{ ...styles.statValue, color }}>{winRate}%</div>
+      )}
+      <div style={styles.statSub}>
+        {golden ? `${golden.wins}W / ${golden.stopped}L · ${golden.total} signals · ${golden.avgR != null ? `${golden.avgR > 0 ? "+" : ""}${golden.avgR}R avg` : ""}` : "Resolved golden signals only"}
+      </div>
+    </div>
+  );
+}
+
 // ─── SessionClockWidget ───────────────────────────────────────────────────────
 
 function SessionClockWidget() {
@@ -4104,6 +4168,7 @@ export default function AppPreBeta() {
         />
 
         <SessionClockWidget />
+        <GoldenSignalCard onOpenStats={() => setActiveTab("stats")} />
         <StatsBar decisions={loggedDecisions} />
 
         {/* TRADER DNA™ TEASER — upsell for non-pro or pro hook to vault */}
