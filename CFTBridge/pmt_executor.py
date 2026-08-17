@@ -18,15 +18,26 @@
 #
 # Position sizing: PickMyTrade's `quantity` field for Match-Trader is a
 # fixed number of LOTS, not base-asset units or a dollar notional (confirmed
-# directly by PickMyTrade support). Crucially, "1 lot" is NOT a universal
-# constant - it varies per instrument. Confirmed via CFT's own Symbol Info
-# panel for every tradable pair: e.g. 1 lot of BTC = 1 BTC, but 1 lot of
-# JASMY = 10,000 JASMY. The ratio is derivable as (Point Value of 1 Lot) /
-# (Point Size) - verified self-consistent against CFT's own TradingView-
-# compatible resolve_symbol endpoint's `pointvalue` field for BTC. See
-# UNITS_PER_LOT below for the full table, gathered by hand from CFT's own
-# terminal since there's no API we can reach to fetch it live (same
-# Cloudflare wall).
+# directly by PickMyTrade support).
+#
+# CORRECTED 2026-08-17: originally assumed units-per-lot varied per
+# instrument, derived as (Point Value of 1 Lot) / (Point Size) read off
+# CFT's Symbol Info panel. That formula was WRONG - confirmed by
+# back-calculating real units-per-lot from 5 actually-executed closed
+# trades (UNI, XRP, NEAR, PENDLE, WLD), spanning old table values of both
+# 10 and 100. Every single one converged on ~1, not the table's value -
+# actual realized risk was running at roughly 2-15% of the intended $25,
+# not dangerously oversized (unlike the earlier BlofinBridge/KAS incident),
+# but wrong. PickMyTrade's own pre-existing Settings entries also showed
+# "Lot Size: 1" uniformly for every symbol checked, which I should have
+# trusted over my own derivation. units_per_lot is now a flat constant (1)
+# instead of a per-pair table - see UNITS_PER_LOT below.
+#
+# This is NOT verified for the THOUSAND_X_PAIRS (PEPE/BONK/FLOKI) or other
+# very-low-unit-price pairs, where a wrong assumption would produce a huge
+# lot count - MAX_LOTS below is a hard safety cap that skips (rather than
+# sends) any computed size large enough to suggest the sizing assumption
+# doesn't hold for that pair, instead of trusting an unverified formula.
 #
 # Special case: PEPE, BONK, and FLOKI are only listed on CFT under a
 # "1000X" naming convention (e.g. "1000PEPEUSDT.cft") - the quoted price is
@@ -35,7 +46,7 @@
 #
 # Setup required before this can run for real:
 #   1. Set up a PickMyTrade "Generate Alert" for MATCHTRADER / STRATEGY /
-#      CFD / "Attach SL/TP to Orders" / PRICE (From TradingView) mode - the
+#      "Attach SL/TP to Orders" / PRICE (From TradingView) mode - the
 #      PRICE mode's `sl`/`tp` fields accept literal numbers directly
 #      (confirmed by PickMyTrade support), no real TradingView chart needed
 #      since we're POSTing to the webhook ourselves, not going through
@@ -74,6 +85,15 @@ MATCHTRADER_ACCOUNT_ID = os.getenv("MATCHTRADER_ACCOUNT_ID", "400251")
 # balance, since the point here is proving the pipeline + comparing real
 # execution against the simulator, not simulating balance growth.
 RISK_AMOUNT_USD = float(os.getenv("RISK_AMOUNT_USD", "25"))
+
+# Preflight bounds on the ACTUAL predicted dollar loss at stop, not just
+# the raw lot count - catches both an undersizing bug (like the real one
+# found 2026-08-17: true risk running at 2-15% of intended) and an
+# oversizing one (like MAX_LOTS alone would miss if units_per_lot were
+# wrong in the other direction). Deliberately wide (+/-40%) since this is
+# a sanity check against a broken assumption, not a precision target.
+RISK_MIN_USD = float(os.getenv("RISK_MIN_USD", "15"))
+RISK_MAX_USD = float(os.getenv("RISK_MAX_USD", "35"))
 
 # Skip signals this stale by the time we'd place the order - same
 # reasoning as BlofinBridge: an old entry/stop/tp1 may no longer reflect a
@@ -125,23 +145,19 @@ THOUSAND_X_PAIRS = {
     "FLOKI/USDT": "1000FLOKIUSDT.cft",
 }
 
-# units_per_lot = (Point Value of 1 Lot) / (Point Size), per-instrument -
-# NOT a universal constant. Verified self-consistent against CFT's own
-# resolve_symbol API `pointvalue` field for BTC (both gave 1).
-UNITS_PER_LOT = {
-    "BTC/USDT": 1, "ETH/USDT": 1, "SOL/USDT": 1, "XRP/USDT": 100,
-    "DOGE/USDT": 1000, "AVAX/USDT": 10, "LINK/USDT": 10, "BNB/USDT": 1,
-    "ADA/USDT": 100, "TRX/USDT": 1000, "ARB/USDT": 100, "OP/USDT": 100,
-    "SUI/USDT": 100, "NEAR/USDT": 10, "ATOM/USDT": 10, "DOT/USDT": 100,
-    "INJ/USDT": 10, "ONDO/USDT": 100, "ICP/USDT": 10, "RENDER/USDT": 10,
-    "WLD/USDT": 100, "TAO/USDT": 1, "AIOZ/USDT": 100, "UNI/USDT": 10,
-    "AAVE/USDT": 1, "JUP/USDT": 100, "PENDLE/USDT": 100, "CRV/USDT": 100,
-    "PEPE/USDT": 10000, "WIF/USDT": 100, "BONK/USDT": 10000,
-    "FLOKI/USDT": 1000, "FIL/USDT": 10, "KAS/USDT": 1000, "MINA/USDT": 100,
-    "ROSE/USDT": 1000, "IMX/USDT": 100, "GALA/USDT": 10000, "AXS/USDT": 10,
-    "LTC/USDT": 1, "BCH/USDT": 1, "ETC/USDT": 10, "STX/USDT": 100,
-    "TIA/USDT": 10, "JASMY/USDT": 10000,
-}
+# Flat constant, not a per-pair table - see the correction note above.
+# Confirmed empirically (not assumed) for UNI/XRP/NEAR/PENDLE/WLD via real
+# closed-trade P&L; unverified for everything else, which is exactly what
+# MAX_LOTS below guards against.
+UNITS_PER_LOT = 1.0
+
+# Hard safety cap: if computing a $25-risk position would require more
+# lots than this, refuse to send the alert rather than trust an unverified
+# sizing assumption for that pair. Real confirmed values topped out around
+# 815 (NEAR) - 5000 leaves generous headroom for legitimate variance while
+# still catching a wildly-wrong computation (e.g. a cheap/thin pair where
+# units-per-lot genuinely isn't 1) before it reaches a real order.
+MAX_LOTS = 5000.0
 
 # Min. Position Size (lots) per instrument, from the same Symbol Info panel -
 # the floor a computed lot size gets clamped to.
@@ -179,26 +195,58 @@ def price_multiplier(pair: str) -> int:
     return 1000 if pair in THOUSAND_X_PAIRS else 1
 
 
-def compute_lots(entry: float, stop: float, risk_amount_usd: float, units_per_lot: float, min_lots: float) -> float:
+def compute_lots(
+    entry: float, stop: float, risk_amount_usd: float, min_lots: float,
+    units_per_lot: float = UNITS_PER_LOT, max_lots: float = MAX_LOTS,
+    risk_min_usd: float = RISK_MIN_USD, risk_max_usd: float = RISK_MAX_USD,
+) -> float:
     """
-    lots = risk_amount / (price_distance * units_per_lot)
-    Same shape as BlofinBridge's compute_contract_size, just with CFT's
-    per-instrument units-per-lot instead of ccxt's contractSize. Floors at
-    the instrument's minimum lot size rather than rounding to zero.
+    Preflight sequence: target risk -> raw lots -> floor at min_lots ->
+    predicted dollar loss at stop -> confirm it's actually near the
+    target -> confirm the lot count itself is sane -> return.
+
+    Worth being precise about what the risk-band check does and doesn't
+    catch: it's self-consistent by construction, so it can't catch
+    units_per_lot itself being wrong (the actual 2026-08-17 bug - that
+    used the same wrong constant on both sides of this exact check and
+    would have passed it). What it DOES catch: the min_lots floor forcing
+    real risk far above target (a genuine, separate failure mode - a
+    pair's minimum tradeable size can itself represent way more than the
+    intended risk), a misconfigured RISK_AMOUNT_USD outside its own
+    band, and future code changes that decouple the sizing step from the
+    sending step. MAX_LOTS remains the backstop against a wrong
+    units_per_lot producing an absurd lot count in the first place.
     """
     price_distance = abs(entry - stop)
     if price_distance <= 0:
         raise ValueError("entry and stop cannot be equal (zero risk)")
+
     raw_lots = risk_amount_usd / (price_distance * units_per_lot)
-    return max(raw_lots, min_lots)
+    lots = max(raw_lots, min_lots)
+
+    if lots > max_lots:
+        raise ValueError(
+            f"computed {lots:.1f} lots exceeds MAX_LOTS ({max_lots}) - "
+            f"sizing assumption likely wrong for this pair, refusing to trade it"
+        )
+
+    predicted_loss_usd = price_distance * lots * units_per_lot
+    if not (risk_min_usd <= predicted_loss_usd <= risk_max_usd):
+        raise ValueError(
+            f"predicted loss at stop (${predicted_loss_usd:.2f}) is outside "
+            f"the intended risk band (${risk_min_usd}-${risk_max_usd}) - "
+            f"refusing to trade it"
+        )
+
+    return lots
 
 
 def build_alert_payload(pair: str, direction: str, entry: float, stop: float, tp1: float, lots: float) -> dict:
     """Builds the PickMyTrade alert JSON, matching exactly the schema
     generated by their "Generate Alert" UI for this MATCHTRADER/STRATEGY/
-    CFD/PRICE-mode alert - only the per-signal fields (symbol, data,
+    PRICE-mode alert - only the per-signal fields (symbol, data,
     quantity, price, tp, sl) are substituted; everything else matches the
-    generated template's defaults."""
+    generated template's defaults except inst_type (see comment below)."""
     symbol = map_symbol(pair)
     mult = price_multiplier(pair)
     return {
@@ -218,7 +266,13 @@ def build_alert_payload(pair: str, direction: str, entry: float, stop: float, tp
         "duplicate_position_allow": False,
         "platform": "MATCHTRADER",
         "order_type": "MARKET",
-        "inst_type": "CFD",
+        # NOT "CFD" - PickMyTrade's own pre-existing symbol registry files
+        # every CFT Match-Trader crypto pair (confirmed for ETH/ADA/SAND/STX
+        # via their Settings page) under FOREXCFD specifically. Sending
+        # "CFD" caused every alert to fail with "Symbol Mapping Not Found"
+        # even though the symbol was already registered - the instrument
+        # type is part of the lookup key.
+        "inst_type": "FOREXCFD",
         "place_order_at": "away_strike",
         "pyramid": False,
         "reverse_order_close": True,
@@ -330,10 +384,7 @@ def run():
                     continue
 
                 try:
-                    lots = compute_lots(
-                        entry, stop, RISK_AMOUNT_USD,
-                        UNITS_PER_LOT[pair], MIN_LOTS[pair],
-                    )
+                    lots = compute_lots(entry, stop, RISK_AMOUNT_USD, MIN_LOTS[pair])
                 except (ValueError, KeyError) as e:
                     log.warning(f"Skipping {event_id} - {e}")
                     continue
