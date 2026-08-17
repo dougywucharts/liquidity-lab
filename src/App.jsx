@@ -1111,31 +1111,52 @@ function GoldenSignalCard({ onOpenStats }) {
           : palette.short;
 
   return (
-    <div
-      onClick={onOpenStats}
-      style={{
-        ...styles.statCard,
-        cursor: "pointer",
-        border: "1px solid rgba(246,196,83,0.28)",
-        background: "linear-gradient(180deg,rgba(24,20,8,0.9),rgba(10,9,4,0.9))",
-      }}
-      title="Golden filter: SWEEP_CONFIRMED + Sweep + Retest + a prime session, excluding weak pairs — click for the full breakdown"
-    >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={styles.statLabel}>★ Golden Signal Win Rate</div>
-        <span style={{ fontSize: 9, color: palette.textDim }}>All-time →</span>
+    <>
+      <style>{`
+        @keyframes goldenBarGlow {
+          0%, 100% { box-shadow: 0 0 10px 1px rgba(246,196,83,0.3), inset 0 0 0 1px rgba(246,196,83,0.45); }
+          50% { box-shadow: 0 0 22px 5px rgba(246,196,83,0.6), inset 0 0 0 1px rgba(246,196,83,0.75); }
+        }
+        .llab-golden-bar { animation: goldenBarGlow 2.2s ease-in-out infinite; }
+      `}</style>
+      <div
+        onClick={onOpenStats}
+        className="llab-golden-bar"
+        style={{
+          borderRadius: 16,
+          padding: "12px 18px",
+          marginBottom: 12,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
+          flexWrap: "wrap",
+          cursor: "pointer",
+          background: "linear-gradient(180deg,rgba(24,20,8,0.92),rgba(10,9,4,0.92))",
+        }}
+        title="Golden filter: SWEEP_CONFIRMED + Sweep + Retest + a prime session, excluding weak pairs — click for the full breakdown"
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 16 }}>★</span>
+          <div style={styles.statLabel}>Golden Signal Win Rate</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+          {error ? (
+            <div style={{ fontSize: 16, fontWeight: 900, color: palette.textDim }}>—</div>
+          ) : winRate == null ? (
+            <div style={{ fontSize: 16, fontWeight: 900, color: palette.textDim }}>Loading…</div>
+          ) : (
+            <div style={{ fontSize: 24, fontWeight: 900, color }}>{winRate}%</div>
+          )}
+          <div style={styles.statSub}>
+            {golden
+              ? `${golden.wins}W / ${golden.stopped}L · ${golden.total} signals · ${golden.avgR != null ? `${golden.avgR > 0 ? "+" : ""}${golden.avgR}R avg` : ""}`
+              : "Resolved golden signals only"}
+          </div>
+          <span style={{ fontSize: 9, color: palette.textDim }}>All-time →</span>
+        </div>
       </div>
-      {error ? (
-        <div style={{ ...styles.statValue, fontSize: 16, color: palette.textDim }}>—</div>
-      ) : winRate == null ? (
-        <div style={{ ...styles.statValue, fontSize: 16, color: palette.textDim }}>Loading…</div>
-      ) : (
-        <div style={{ ...styles.statValue, color }}>{winRate}%</div>
-      )}
-      <div style={styles.statSub}>
-        {golden ? `${golden.wins}W / ${golden.stopped}L · ${golden.total} signals · ${golden.avgR != null ? `${golden.avgR > 0 ? "+" : ""}${golden.avgR}R avg` : ""}` : "Resolved golden signals only"}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -4168,7 +4189,6 @@ export default function AppPreBeta() {
         />
 
         <SessionClockWidget />
-        <GoldenSignalCard onOpenStats={() => setActiveTab("stats")} />
         <StatsBar decisions={loggedDecisions} />
 
         {/* TRADER DNA™ TEASER — upsell for non-pro or pro hook to vault */}
@@ -4268,6 +4288,8 @@ export default function AppPreBeta() {
             watching rather than a setup meant to be executed as-is.
           </span>
         </div>
+
+        <GoldenSignalCard onOpenStats={() => setActiveTab("stats")} />
 
         {/* MAIN GRID */}
         <div style={styles.mainGrid} className="llab-main-grid">
