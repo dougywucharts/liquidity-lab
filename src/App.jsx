@@ -4699,6 +4699,12 @@ export default function AppPreBeta() {
                   </span>
                   {[
                     {
+                      label: "Crypto Fund Trader",
+                      href: "https://cryptofundtrader.com/",
+                      color: "#eab308",
+                      bg: "rgba(234,179,8,0.1)",
+                    },
+                    {
                       label: "FTMO",
                       href: "https://ftmo.com/?affiliates=redoctober",
                       color: "#ef4444",
