@@ -4399,7 +4399,7 @@ export default function AppPreBeta() {
                   const isGolden =
                     isConfirmedStage &&
                     wave.events?.[0]?.pattern === "Sweep + Retest" &&
-                    ["London Open", "Asia", "NY Open"].includes(wave.session) &&
+                    ["London Open", "Asia", "NY Open", "NY"].includes(wave.session) &&
                     !["SAND/USDT", "SEI/USDT", "APT/USDT"].includes(wave.pair);
                   return (
                     <div

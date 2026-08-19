@@ -1309,16 +1309,24 @@ const STATS_BASELINE_SINCE = new Date('2026-07-10T00:19:39.000Z')
 
 // "Golden" — the strongest filters stacked together: Confirmed-only +
 // Sweep + Retest + a prime session + not a weak pair. This is the
-// authoritative definition (73.8% win rate / n=328 as of this build) -
-// shared by /sweep/stats and the FTMO sim job below so they can't drift
-// apart. NOTE: this intentionally does NOT mirror BOTFINAL.py's own
-// PRIME_SESSIONS constant, which uses "Asia Open" (dead/unreachable code
-// there - classify_time_window can only emit "Asia"). Real stored session
-// values are exactly: "Asia", "London Open", "London", "NY Open", "NY",
-// "NY Close", "Off-Hours" - this list reflects that.
+// authoritative definition - shared by /sweep/stats and the FTMO sim job
+// below so they can't drift apart. NOTE: this intentionally does NOT
+// mirror BOTFINAL.py's own PRIME_SESSIONS constant, which uses "Asia Open"
+// (dead/unreachable code there - classify_time_window can only emit
+// "Asia"). Real stored session values are exactly: "Asia", "London Open",
+// "London", "NY Open", "NY", "NY Close", "Off-Hours" - this list reflects
+// that.
+//
+// "NY" added 2026-08-19: real DB query on SWEEP_CONFIRMED + Sweep+Retest
+// showed NY (15:00-17:00 UTC) at 70.8% win rate / 1.34R avg (n=131) -
+// solidly profitable, just below the other golden sessions' bar. Adding it
+// costs ~1.2pp win rate / 0.08R off the golden average in exchange for 34%
+// more signal volume, worth it given the recent multi-day quiet stretch.
+// "NY Close" (20:00-22:00 UTC) was the weaker of the two excluded NY
+// windows (68.3%/1.18R) and deliberately left out - watch NY first.
 const GOLDEN_EVENT_TYPE = 'SWEEP_CONFIRMED'
 const GOLDEN_PATTERN = 'Sweep + Retest'
-const PRIME_SESSIONS = ['London Open', 'Asia', 'NY Open']
+const PRIME_SESSIONS = ['London Open', 'Asia', 'NY Open', 'NY']
 const WEAK_PAIRS = ['SAND/USDT', 'SEI/USDT', 'APT/USDT']
 
 function isGoldenRow (r) {
@@ -1436,7 +1444,7 @@ app.get('/sweep/stats', async (req, res) => {
       overall: summarize(rows),
       golden: {
         ...summarize(goldenRows),
-        criteria: 'SWEEP_CONFIRMED + Sweep + Retest + London Open/Asia/NY Open, excluding SAND/USDT, SEI/USDT, APT/USDT'
+        criteria: 'SWEEP_CONFIRMED + Sweep + Retest + London Open/Asia/NY Open/NY, excluding SAND/USDT, SEI/USDT, APT/USDT'
       },
       byEventType: groupBy(rows, 'eventType'),
       byPattern: groupBy(rows, 'pattern'),
