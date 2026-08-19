@@ -75,7 +75,15 @@ export default function SignalStats({ onBack }) {
     try {
       setLoading(true);
       setError("");
-      const res = await fetch(`${API_BASE}/sweep/stats?shadow=${shadow ? "true" : "false"}`);
+      let token = "";
+      try {
+        token = localStorage.getItem("token") || "";
+      } catch {
+        // localStorage unavailable — proceed unauthenticated
+      }
+      const res = await fetch(`${API_BASE}/sweep/stats?shadow=${shadow ? "true" : "false"}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       setStats(data);
@@ -173,7 +181,20 @@ export default function SignalStats({ onBack }) {
           </div>
         </div>
 
-        {golden && (
+        {golden?.locked && (
+          <div style={s.goldenBox}>
+            <div style={s.goldenHeader}>
+              <div>
+                <div style={s.goldenKicker}>★ GOLDEN — CORE/PRO ONLY</div>
+                <div style={s.goldenCriteria}>
+                  {golden.message || "Upgrade to Core or Pro to see golden signal win rate and stats."}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {golden && !golden.locked && (
           <div style={s.goldenBox}>
             <div style={s.goldenHeader}>
               <div>

@@ -1344,6 +1344,32 @@ function isGoldenRow (r) {
   )
 }
 
+// Golden signals (the ★ badge, the win-rate card, and the raw isGolden
+// flag on /events) are Core/Pro/pro_beta only - shared so /ai-review,
+// /profile, /events, and /sweep/stats can't drift apart on who qualifies.
+function hasCoreOrProAccess (user) {
+  return (
+    user?.billingPlan === 'pro' ||
+    user?.billingPlan === 'pro_beta' ||
+    user?.billingPlan === 'core'
+  )
+}
+
+// Like requireAuth, but never rejects - /events and /sweep/stats are public
+// (bots and anonymous dashboard visitors hit them with no token at all), so
+// this only identifies a logged-in user when one is present, to decide
+// whether to include golden-signal data in the response.
+async function getOptionalUser (req) {
+  try {
+    const token = getBearerToken(req)
+    if (!token) return null
+    const decoded = jwt.verify(token, JWT_SECRET)
+    return await prisma.user.findUnique({ where: { id: decoded.userId } })
+  } catch {
+    return null
+  }
+}
+
 // R-multiple realized on a signal: -1R on a stop (by definition), or the
 // actual reward/risk ratio on a win. Null if entry/stop are missing or
 // degenerate (risk <= 0), or the outcome isn't a decided win/loss yet -
@@ -1440,6 +1466,13 @@ app.get('/sweep/stats', async (req, res) => {
 
     const goldenRows = rows.filter(isGoldenRow)
 
+    // Golden stats (win rate, R, and the exact criteria string) are
+    // Core/Pro/pro_beta only - this endpoint is public/unauthenticated (the
+    // dashboard calls it with whatever token it has, if any), so identify
+    // the caller without rejecting anonymous/bot requests.
+    const user = await getOptionalUser(req)
+    const unlocked = hasCoreOrProAccess(user)
+
     return res.json({
       ok: true,
       filter: {
@@ -1448,10 +1481,15 @@ app.get('/sweep/stats', async (req, res) => {
         all: includeAll
       },
       overall: summarize(rows),
-      golden: {
-        ...summarize(goldenRows),
-        criteria: 'SWEEP_CONFIRMED + Sweep + Retest + full Asia/London/NY sessions (excluding NY Close), excluding SAND/USDT, SEI/USDT, APT/USDT'
-      },
+      golden: unlocked
+        ? {
+            ...summarize(goldenRows),
+            criteria: 'SWEEP_CONFIRMED + Sweep + Retest + full Asia/London/NY sessions (excluding NY Close), excluding SAND/USDT, SEI/USDT, APT/USDT'
+          }
+        : {
+            locked: true,
+            message: 'Upgrade to Core or Pro to see golden signal win rate and stats.'
+          },
       byEventType: groupBy(rows, 'eventType'),
       byPattern: groupBy(rows, 'pattern'),
       byPair: groupBy(rows, 'pair'),
@@ -1844,7 +1882,8 @@ app.post('/auth/register', async (req, res) => {
           aiReview: BETA_FULL_ACCESS,
           screenshotReview: BETA_FULL_ACCESS,
           export: BETA_FULL_ACCESS,
-          deeperStats: BETA_FULL_ACCESS
+          deeperStats: BETA_FULL_ACCESS,
+          goldenSignals: BETA_FULL_ACCESS
         }
       }
     })
@@ -2037,10 +2076,7 @@ app.get('/me', requireAuth, async (req, res) => {
       user.aiReviewReset = null
     }
 
-    const hasProAccess =
-      user.billingPlan === 'pro' ||
-      user.billingPlan === 'pro_beta' ||
-      user.billingPlan === 'core'
+    const hasProAccess = hasCoreOrProAccess(user)
     const screenshotLimit = 5
     const screenshotRemaining = Math.max(
       0,
@@ -2064,7 +2100,8 @@ app.get('/me', requireAuth, async (req, res) => {
           aiReview: hasProAccess,
           screenshotReview: hasProAccess,
           export: hasProAccess,
-          deeperStats: hasProAccess
+          deeperStats: hasProAccess,
+          goldenSignals: hasProAccess
         }
       }
     })
@@ -2165,8 +2202,17 @@ app.patch('/notifications/preferences', requireAuth, async (req, res) => {
 })
 
 // ---------------- RADAR ----------------
-app.get('/events', (_req, res) => {
-  res.json({ events })
+app.get('/events', async (req, res) => {
+  // isGolden is computed here (not left to the client) so it's an
+  // authoritative flag, then masked to false for anyone without Core/Pro
+  // access - same data every request gets otherwise (session/pattern/pair
+  // are shown on every card regardless of plan; bots that hit this
+  // endpoint unauthenticated compute their own is_golden from those raw
+  // fields and never read this flag, so masking it doesn't affect them).
+  const user = await getOptionalUser(req)
+  const unlocked = hasCoreOrProAccess(user)
+  const withGolden = events.map(e => ({ ...e, isGolden: unlocked && isGoldenRow(e) }))
+  res.json({ events: withGolden })
 })
 
 app.get('/test-sweep', (_req, res) => {
@@ -2205,10 +2251,7 @@ app.post('/ai-review', requireAuth, async (req, res) => {
     // Plan gate — AI review is Core/Pro/Beta only. The frontend hides the
     // button for starter users, but that's not enforcement; without this
     // check any authenticated user could call the endpoint directly.
-    const hasProAccess =
-      req.user.billingPlan === 'pro' ||
-      req.user.billingPlan === 'pro_beta' ||
-      req.user.billingPlan === 'core'
+    const hasProAccess = hasCoreOrProAccess(req.user)
     if (!hasProAccess) {
       return res.status(403).json({
         error: 'AI review requires a Core or Pro plan',

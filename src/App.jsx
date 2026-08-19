@@ -1087,8 +1087,11 @@ function GoldenSignalCard({ onOpenStats }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API_BASE}/sweep/stats`)
-      .then((res) => res.json())
+    // apiFetch (not a bare fetch) so the auth token goes along - the
+    // server only returns real golden stats for Core/Pro accounts and
+    // sends { locked: true } otherwise, which needs a token to tell apart
+    // from a logged-out visitor.
+    apiFetch("/sweep/stats")
       .then((data) => {
         if (!cancelled) setGolden(data?.golden || null);
       })
@@ -1100,6 +1103,7 @@ function GoldenSignalCard({ onOpenStats }) {
     };
   }, []);
 
+  const locked = golden?.locked === true;
   const winRate = golden?.winRate;
   const color =
     winRate == null
@@ -1134,26 +1138,41 @@ function GoldenSignalCard({ onOpenStats }) {
           cursor: "pointer",
           background: "linear-gradient(180deg,rgba(24,20,8,0.92),rgba(10,9,4,0.92))",
         }}
-        title="Golden filter: SWEEP_CONFIRMED + Sweep + Retest + a prime session, excluding weak pairs — click for the full breakdown"
+        title={
+          locked
+            ? "Golden signal stats are a Core/Pro feature — click to upgrade"
+            : "Golden filter: SWEEP_CONFIRMED + Sweep + Retest + a prime session, excluding weak pairs — click for the full breakdown"
+        }
       >
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 16 }}>★</span>
           <div style={styles.statLabel}>Golden Signal Win Rate</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-          {error ? (
-            <div style={{ fontSize: 16, fontWeight: 900, color: palette.textDim }}>—</div>
-          ) : winRate == null ? (
-            <div style={{ fontSize: 16, fontWeight: 900, color: palette.textDim }}>Loading…</div>
+          {locked ? (
+            <>
+              <div style={{ fontSize: 16, fontWeight: 900, color: "#f6c453" }}>🔒 Core/Pro</div>
+              <div style={styles.statSub}>
+                {golden.message || "Upgrade to see golden signal win rate"}
+              </div>
+            </>
           ) : (
-            <div style={{ fontSize: 24, fontWeight: 900, color }}>{winRate}%</div>
+            <>
+              {error ? (
+                <div style={{ fontSize: 16, fontWeight: 900, color: palette.textDim }}>—</div>
+              ) : winRate == null ? (
+                <div style={{ fontSize: 16, fontWeight: 900, color: palette.textDim }}>Loading…</div>
+              ) : (
+                <div style={{ fontSize: 24, fontWeight: 900, color }}>{winRate}%</div>
+              )}
+              <div style={styles.statSub}>
+                {golden
+                  ? `${golden.wins}W / ${golden.stopped}L · ${golden.total} signals · ${golden.avgR != null ? `${golden.avgR > 0 ? "+" : ""}${golden.avgR}R avg` : ""}`
+                  : "Resolved golden signals only"}
+              </div>
+              <span style={{ fontSize: 9, color: palette.textDim }}>All-time →</span>
+            </>
           )}
-          <div style={styles.statSub}>
-            {golden
-              ? `${golden.wins}W / ${golden.stopped}L · ${golden.total} signals · ${golden.avgR != null ? `${golden.avgR > 0 ? "+" : ""}${golden.avgR}R avg` : ""}`
-              : "Resolved golden signals only"}
-          </div>
-          <span style={{ fontSize: 9, color: palette.textDim }}>All-time →</span>
         </div>
       </div>
     </>
@@ -4391,16 +4410,13 @@ export default function AppPreBeta() {
                   // "Golden setup" — Sweep + Retest is the standout pattern in
                   // this bot's own outcome data (65%+ win rate, +1.19R avg,
                   // far ahead of every other pattern) — worth visually flagging.
-                  // Only eligible once confirmed, same reasoning as above.
-                  // Must mirror server.js's isGoldenRow/WEAK_PAIRS exactly —
-                  // this badge previously only checked eventType+pattern,
-                  // so it lit up on signals (e.g. wrong session) that no
-                  // executor would ever actually trade.
-                  const isGolden =
-                    isConfirmedStage &&
-                    wave.events?.[0]?.pattern === "Sweep + Retest" &&
-                    ["London Open", "London", "Asia", "Asia Open", "NY Open", "NY"].includes(wave.session) &&
-                    !["SAND/USDT", "SEI/USDT", "APT/USDT"].includes(wave.pair);
+                  // isGolden is now server-computed (server.js's isGoldenRow)
+                  // and plan-gated there — Core/Pro accounts get the real
+                  // value, everyone else gets false regardless of the
+                  // signal's actual criteria. Trust it rather than
+                  // recomputing client-side, which would leak the golden
+                  // criteria to any starter user reading the network tab.
+                  const isGolden = isConfirmedStage && wave.events?.[0]?.isGolden === true;
                   return (
                     <div
                       key={wave.key}
