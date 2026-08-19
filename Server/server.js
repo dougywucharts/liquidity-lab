@@ -1324,9 +1324,15 @@ const STATS_BASELINE_SINCE = new Date('2026-07-10T00:19:39.000Z')
 // more signal volume, worth it given the recent multi-day quiet stretch.
 // "NY Close" (20:00-22:00 UTC) was the weaker of the two excluded NY
 // windows (68.3%/1.18R) and deliberately left out - watch NY first.
+//
+// "Asia Open" and "London" (full) added same day: Asia Open (22:00-24:00
+// UTC) 70.0%/1.28R (n=100), London (9:00-12:00 UTC) 73.6%/1.47R (n=91) -
+// London in particular is nearly free (barely dents the golden average).
+// Now covers the full Asia, London, and NY sessions; only "NY Close"
+// remains excluded.
 const GOLDEN_EVENT_TYPE = 'SWEEP_CONFIRMED'
 const GOLDEN_PATTERN = 'Sweep + Retest'
-const PRIME_SESSIONS = ['London Open', 'Asia', 'NY Open', 'NY']
+const PRIME_SESSIONS = ['London Open', 'London', 'Asia', 'Asia Open', 'NY Open', 'NY']
 const WEAK_PAIRS = ['SAND/USDT', 'SEI/USDT', 'APT/USDT']
 
 function isGoldenRow (r) {
@@ -1444,7 +1450,7 @@ app.get('/sweep/stats', async (req, res) => {
       overall: summarize(rows),
       golden: {
         ...summarize(goldenRows),
-        criteria: 'SWEEP_CONFIRMED + Sweep + Retest + London Open/Asia/NY Open/NY, excluding SAND/USDT, SEI/USDT, APT/USDT'
+        criteria: 'SWEEP_CONFIRMED + Sweep + Retest + full Asia/London/NY sessions (excluding NY Close), excluding SAND/USDT, SEI/USDT, APT/USDT'
       },
       byEventType: groupBy(rows, 'eventType'),
       byPattern: groupBy(rows, 'pattern'),

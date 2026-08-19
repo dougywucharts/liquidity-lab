@@ -112,7 +112,7 @@ PF_LEDGER_TRADE_FIELDS = [
 
 GOLDEN_EVENT_TYPE = "SWEEP_CONFIRMED"
 GOLDEN_PATTERN = "Sweep + Retest"
-GOLDEN_SESSIONS = {"London Open", "Asia", "NY Open", "NY"}
+GOLDEN_SESSIONS = {"London Open", "London", "Asia", "Asia Open", "NY Open", "NY"}
 GOLDEN_EXCLUDE_PAIRS = {"SAND/USDT", "SEI/USDT", "APT/USDT"}
 
 # Pairs excluded here for demo EXECUTION quality, not signal quality - kept
