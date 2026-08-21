@@ -49,6 +49,16 @@
 # fixed, already-happened price rather than a zone that can go stale
 # during the delay, with a naturally tighter stop distance for free.
 # stop and tp1 are left at BOTFINAL.py's original values.
+#
+# THIRD VARIANT added 2026-08-21 ("recent_candle"): the sweep extreme
+# above is still anchored to whichever candle the SWEEP happened on,
+# which can itself be many minutes before the signal actually confirms
+# and fires - not just the ~100s execution delay on top of that. This
+# variant uses the high (Short) / low (Long) of the most recently CLOSED
+# 1m candle AT SIGNAL TIME instead - the freshest real price reference
+# available, fetched live rather than read from the original signal
+# payload. Stop and tp1 stay at BOTFINAL.py's original values, same as
+# the extreme variant.
 
 import csv
 import json
@@ -149,6 +159,25 @@ def compute_extreme(direction, entry_min, entry_max, stop):
     if direction == "Short":
         return entry_max, stop
     return entry_min, stop
+
+
+def compute_recent_candle_entry(direction, symbol):
+    """Entry at the high (Short) / low (Long) of the most recently CLOSED
+    1m candle at signal time - not the original sweep candle (which can
+    be many minutes stale by the time a real order fires), the freshest
+    price reference available. Returns None if the fetch fails, so the
+    caller can skip this variant for that signal rather than track a
+    trade with no real entry level."""
+    candles = fetch_ohlcv_safe(symbol, limit=2)
+    if not candles:
+        return None
+    # fetch_ohlcv's last element can be the still-forming candle - prefer
+    # the one before it if we got two, so "most recent" means "most
+    # recent CLOSED", matching how every other variant's levels are
+    # already-settled prices, not a moving target.
+    candle = candles[-2] if len(candles) >= 2 else candles[-1]
+    _, o, h, l, c, v = candle
+    return h if direction == "Short" else l
 
 
 def fetch_events():
@@ -340,6 +369,17 @@ def run():
                     log.info(
                         f"TRACKING [extreme] {pair} {direction} entry={entry} adj_entry={ext_entry:.6g} "
                         f"stop={stop} adj_stop={ext_stop:.6g} tp1={tp1}"
+                    )
+
+                candle_entry = compute_recent_candle_entry(direction, base_trade["symbol"])
+                if candle_entry is not None:
+                    pending[f"{event_id}::candle"] = {
+                        **base_trade, "variant": "recent_candle",
+                        "adj_entry": candle_entry, "adj_stop": stop,
+                    }
+                    log.info(
+                        f"TRACKING [candle] {pair} {direction} entry={entry} adj_entry={candle_entry:.6g} "
+                        f"stop={stop} adj_stop={stop:.6g} tp1={tp1}"
                     )
 
             if pending:
