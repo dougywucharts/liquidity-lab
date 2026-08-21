@@ -61,6 +61,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import ccxt
 import requests
 from dotenv import load_dotenv
 
@@ -102,6 +103,22 @@ MAX_SIGNAL_AGE_SECONDS = int(os.getenv("MAX_SIGNAL_AGE_SECONDS", "300"))
 
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "20"))
 
+# Market-state gate added 2026-08-21: cross-referencing all 46 real CFT
+# trades against BOTFINAL.py's own timestampUtc showed a uniform ~70-131s
+# signal-to-send latency (candle-close lag + BOTFINAL's scan loop + this
+# poll interval). Two of the trades where golden's own theoretical outcome
+# was a WIN but the real trade LOST (BNB, NEAR) had already moved PAST
+# where golden's TP1/TP2 sat by the time the real order filled - the
+# executor wasn't executing the signal anymore, it was chasing the tail
+# of a move that had already happened. This refuses to submit an order
+# once current price has already traveled more than this fraction of the
+# entry->tp1 distance in the trade's favor, rather than chasing it.
+# Checked against BloFin's live price (public, no auth) right before
+# submitting - fails OPEN (allows the trade) if the price check itself
+# can't be completed, since this is a quality gate, not a hard risk limit
+# like MAX_LOTS.
+MAX_ENTRY_PROGRESS_PCT = float(os.getenv("MAX_ENTRY_PROGRESS_PCT", "0.50"))
+
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 TRADE_LOG_PATH = LOG_DIR / "pmt_trades.csv"
@@ -109,8 +126,11 @@ SEEN_EVENTS_PATH = LOG_DIR / "seen_events.json"
 
 TRADE_LOG_FIELDS = [
     "logged_at", "event_id", "pair", "cft_symbol", "direction",
-    "entry", "stop", "tp1", "lots", "risk_amount_usd", "status", "response",
+    "entry", "stop", "tp1", "lots", "risk_amount_usd",
+    "current_price", "entry_progress_pct", "status", "response",
 ]
+
+exchange = ccxt.blofin({"enableRateLimit": True, "options": {"defaultType": "swap"}})
 
 # ---------------- GOLDEN FILTER (mirrors server.js exactly) ----------------
 
@@ -188,6 +208,45 @@ def map_symbol(pair: str) -> str | None:
         return THOUSAND_X_PAIRS[pair]
     base = pair.split("/")[0]
     return f"{base}USDT.cft"
+
+
+def to_exchange_symbol(pair: str) -> str:
+    """Liquidity Lab pair (e.g. "BTC/USDT") -> BloFin perpetual swap symbol
+    (e.g. "BTC/USDT:USDT") for a live price check - separate from
+    map_symbol, which targets CFT's own naming convention instead."""
+    base = pair.split("/")[0]
+    return f"{base}/USDT:USDT"
+
+
+def check_market_state(
+    direction: str, entry: float, tp1: float, current_price: float,
+    max_progress_pct: float = MAX_ENTRY_PROGRESS_PCT,
+) -> tuple[bool, float]:
+    """Refuses to chase a signal whose favorable move has already mostly
+    played out by the time we'd submit a real order. progress_pct is how
+    far current_price has already traveled from entry toward tp1, as a
+    fraction of the total entry->tp1 distance - negative if price has
+    moved the wrong way, >1.0 if price is already past tp1 entirely.
+    Returns (ok_to_trade, progress_pct)."""
+    total_distance = tp1 - entry if direction == "Long" else entry - tp1
+    if total_distance <= 0:
+        return True, 0.0  # degenerate signal, not this gate's job to catch
+
+    traveled = current_price - entry if direction == "Long" else entry - current_price
+    progress_pct = traveled / total_distance
+    return progress_pct <= max_progress_pct, progress_pct
+
+
+def fetch_current_price(symbol: str) -> float | None:
+    """Best-effort live price check - returns None on any failure so the
+    caller can fail open rather than block a trade over a transient
+    network/exchange hiccup."""
+    try:
+        ticker = exchange.fetch_ticker(symbol)
+        return ticker.get("last") or ticker.get("close")
+    except Exception as e:
+        log.warning(f"  market-state price check failed for {symbol}: {e}")
+        return None
 
 
 def price_multiplier(pair: str) -> int:
@@ -399,6 +458,18 @@ def run():
                     f"entry={entry} stop={stop} tp1={tp1} lots={lots}"
                 )
 
+                current_price = fetch_current_price(to_exchange_symbol(pair))
+                progress_pct = None
+                if current_price is not None:
+                    market_ok, progress_pct = check_market_state(direction, entry, tp1, current_price)
+                    if not market_ok:
+                        log.info(
+                            f"Skipping {event_id} - price already {progress_pct:.0%} of the way "
+                            f"to tp1 (current={current_price}, entry={entry}, tp1={tp1}) - "
+                            f"this would be chasing the move, not executing the signal"
+                        )
+                        continue
+
                 payload = build_alert_payload(pair, direction, entry, stop, tp1, lots)
                 ok, response_text = send_alert(payload)
 
@@ -418,6 +489,8 @@ def run():
                     "tp1": tp1,
                     "lots": lots,
                     "risk_amount_usd": RISK_AMOUNT_USD,
+                    "current_price": current_price if current_price is not None else "",
+                    "entry_progress_pct": f"{progress_pct:.4f}" if progress_pct is not None else "",
                     "status": "SENT" if ok else "FAILED",
                     "response": response_text,
                 })
