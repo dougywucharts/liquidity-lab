@@ -110,14 +110,24 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "20"))
 # was a WIN but the real trade LOST (BNB, NEAR) had already moved PAST
 # where golden's TP1/TP2 sat by the time the real order filled - the
 # executor wasn't executing the signal anymore, it was chasing the tail
-# of a move that had already happened. This refuses to submit an order
-# once current price has already traveled more than this fraction of the
-# entry->tp1 distance in the trade's favor, rather than chasing it.
+# of a move that had already happened.
+#
+# CORRECTED same day: initially set to 0.50, validated only against 8
+# losing examples. Checking it against 6 real WINS afterward showed 5 of
+# them (ETC, LINK, LTC, PENDLE, WLD) had a chase % between 56-90% by the
+# time of the real fill - completely normal for a winner, not a warning
+# sign. A 50% cutoff would have blocked 5 of 6 real winners while only
+# catching 1 loss beyond what 100% alone already catches. The only thing
+# that cleanly separates the two known bad cases (BNB 139%, NEAR 178%)
+# from EVERY other case in either direction (all of which topped out at
+# 90%) is going fully past tp1 entirely - so this only blocks once
+# progress exceeds 100%, not partway through.
+#
 # Checked against BloFin's live price (public, no auth) right before
 # submitting - fails OPEN (allows the trade) if the price check itself
 # can't be completed, since this is a quality gate, not a hard risk limit
 # like MAX_LOTS.
-MAX_ENTRY_PROGRESS_PCT = float(os.getenv("MAX_ENTRY_PROGRESS_PCT", "0.50"))
+MAX_ENTRY_PROGRESS_PCT = float(os.getenv("MAX_ENTRY_PROGRESS_PCT", "1.0"))
 
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
