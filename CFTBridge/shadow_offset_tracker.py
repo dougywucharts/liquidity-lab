@@ -31,6 +31,24 @@
 #     distance further away than the signal's own stop
 #   tp1 target is left UNCHANGED - isolates the effect of entry/stop
 #   placement on win rate and realized R, same target either way.
+#
+# SECOND VARIANT added 2026-08-21 ("extreme"): after the real CFT account
+# failed its evaluation, cross-referencing all 46 real trades against the
+# DB's `timestampUtc` showed a uniform ~70-130s delay between signal and
+# execution (pmt_executor.py's poll interval + webhook chain) with no
+# correlation to win/loss - meaning it's not that some trades are later
+# than others, it's that ALL of them are equally late relative to
+# whatever window the pattern actually needs. BOTFINAL.py's own
+# build_rr_plan (BOTFINAL.py:795-891) already computes this: the
+# canonical `entry` field is deliberately the WORST-case fill (the top of
+# a confirmation zone for longs, bottom for shorts) - a padded buffer
+# above/below the actual swept extreme, which is separately available as
+# `entry_min` (longs) / `entry_max` (shorts) and sits much closer to
+# `stop` (which is anchored right off that same extreme). This variant
+# uses that already-computed sweep-extreme level as entry instead - a
+# fixed, already-happened price rather than a zone that can go stale
+# during the delay, with a naturally tighter stop distance for free.
+# stop and tp1 are left at BOTFINAL.py's original values.
 
 import csv
 import json
@@ -69,12 +87,35 @@ PENDING_PATH = LOG_DIR / "shadow_pending.json"
 RESULTS_PATH = LOG_DIR / "shadow_results.csv"
 
 RESULT_FIELDS = [
-    "resolved_at", "event_id", "pair", "session", "direction",
+    "resolved_at", "event_id", "variant", "pair", "session", "direction",
     "entry", "stop", "tp1", "adj_entry", "adj_stop",
     "outcome", "fill_time", "resolved_time",
 ]
 
 exchange = ccxt.blofin({"enableRateLimit": True, "options": {"defaultType": "swap"}})
+
+# BloFin's public candles endpoint is Cloudflare-gated under rapid
+# sequential requests (confirmed live 2026-08-20 while building the
+# abandoned backtest - 429s plus an HTML JS-challenge page instead of
+# JSON within ~15 requests). Now that each signal tracks two variants
+# (double the symbols touched per poll when multiple trades are
+# pending), the same risk applies here - a bare fetch_ohlcv could come
+# back with a Cloudflare challenge page instead of candles and get
+# logged as a wall of HTML. Retry with backoff instead of failing loud.
+FETCH_MAX_RETRIES = 3
+FETCH_RETRY_BASE_SECONDS = 3.0
+
+
+def fetch_ohlcv_safe(symbol, limit):
+    for attempt in range(FETCH_MAX_RETRIES):
+        try:
+            return exchange.fetch_ohlcv(symbol, timeframe="1m", limit=limit)
+        except Exception as e:
+            if attempt == FETCH_MAX_RETRIES - 1:
+                log.error(f"  fetch failed for {symbol} after {FETCH_MAX_RETRIES} tries: {type(e).__name__}")
+                return None
+            time.sleep(FETCH_RETRY_BASE_SECONDS * (2**attempt))
+    return None
 
 
 def is_golden(event: dict) -> bool:
@@ -98,6 +139,16 @@ def compute_adjusted(direction, entry, stop):
     if direction == "Short":
         return entry + entry_buf, stop + stop_buf
     return entry - entry_buf, stop - stop_buf
+
+
+def compute_extreme(direction, entry_min, entry_max, stop):
+    """Entry at the swept extreme itself (BOTFINAL.py's entry_min for
+    longs, entry_max for shorts) instead of the padded worst-fill zone
+    edge - stop is left as BOTFINAL.py computed it, already anchored to
+    the same extreme, so this is naturally a tighter risk distance."""
+    if direction == "Short":
+        return entry_max, stop
+    return entry_min, stop
 
 
 def fetch_events():
@@ -141,14 +192,12 @@ def check_pending(pending: dict):
 
     for event_id, trade in pending.items():
         symbol = trade["symbol"]
-        try:
-            # Small window is enough - we poll every 30s, only new candles
-            # since the last check matter. 15 candles of slack covers any
-            # gap from a slow cycle or a brief restart.
-            candles = exchange.fetch_ohlcv(symbol, timeframe="1m", limit=15)
-            time.sleep(0.5)
-        except Exception as e:
-            log.error(f"  fetch failed for {symbol}: {e}")
+        # Small window is enough - we poll every 30s, only new candles
+        # since the last check matter. 15 candles of slack covers any
+        # gap from a slow cycle or a brief restart.
+        candles = fetch_ohlcv_safe(symbol, limit=15)
+        time.sleep(0.5)
+        if candles is None:
             continue
 
         last_checked = trade.get("last_checked_ts", 0)
@@ -178,10 +227,11 @@ def check_pending(pending: dict):
                 elif tp1_hit:
                     outcome = "TP1_HIT"
                 if outcome:
-                    log.info(f"RESOLVED {trade['pair']} {direction} -> {outcome}")
+                    log.info(f"RESOLVED [{trade['variant']}] {trade['pair']} {direction} -> {outcome}")
                     append_result({
                         "resolved_at": datetime.now(timezone.utc).isoformat(),
                         "event_id": event_id,
+                        "variant": trade["variant"],
                         "pair": trade["pair"],
                         "session": trade["session"],
                         "direction": direction,
@@ -200,10 +250,11 @@ def check_pending(pending: dict):
         age_hours = (time.time() * 1000 - trade["created_ms"]) / 3_600_000
         if event_id not in resolved_ids and age_hours >= TRACK_MAX_HOURS:
             outcome = "NO_FILL" if trade["status"] == "WAITING_FILL" else "EXPIRED"
-            log.info(f"RESOLVED {trade['pair']} {direction} -> {outcome} (timed out)")
+            log.info(f"RESOLVED [{trade['variant']}] {trade['pair']} {direction} -> {outcome} (timed out)")
             append_result({
                 "resolved_at": datetime.now(timezone.utc).isoformat(),
                 "event_id": event_id,
+                "variant": trade["variant"],
                 "pair": trade["pair"],
                 "session": trade["session"],
                 "direction": direction,
@@ -251,11 +302,13 @@ def run():
                 entry = event.get("entry")
                 stop = event.get("stop")
                 tp1 = event.get("tp1")
+                entry_min = event.get("entry_min")
+                entry_max = event.get("entry_max")
                 if entry is None or stop is None or tp1 is None:
                     continue
 
-                adj_entry, adj_stop = compute_adjusted(direction, entry, stop)
-                pending[event_id] = {
+                created_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                base_trade = {
                     "pair": pair,
                     "symbol": to_symbol(pair),
                     "session": event.get("session"),
@@ -263,16 +316,31 @@ def run():
                     "entry": entry,
                     "stop": stop,
                     "tp1": tp1,
-                    "adj_entry": adj_entry,
-                    "adj_stop": adj_stop,
                     "status": "WAITING_FILL",
-                    "created_ms": int(datetime.now(timezone.utc).timestamp() * 1000),
+                    "created_ms": created_ms,
                     "last_checked_ts": 0,
                 }
+
+                adj_entry, adj_stop = compute_adjusted(direction, entry, stop)
+                pending[f"{event_id}::offset"] = {
+                    **base_trade, "variant": "offset_25_50",
+                    "adj_entry": adj_entry, "adj_stop": adj_stop,
+                }
                 log.info(
-                    f"TRACKING {pair} {direction} entry={entry} adj_entry={adj_entry:.6g} "
+                    f"TRACKING [offset] {pair} {direction} entry={entry} adj_entry={adj_entry:.6g} "
                     f"stop={stop} adj_stop={adj_stop:.6g} tp1={tp1}"
                 )
+
+                if entry_min is not None and entry_max is not None:
+                    ext_entry, ext_stop = compute_extreme(direction, entry_min, entry_max, stop)
+                    pending[f"{event_id}::extreme"] = {
+                        **base_trade, "variant": "sweep_extreme",
+                        "adj_entry": ext_entry, "adj_stop": ext_stop,
+                    }
+                    log.info(
+                        f"TRACKING [extreme] {pair} {direction} entry={entry} adj_entry={ext_entry:.6g} "
+                        f"stop={stop} adj_stop={ext_stop:.6g} tp1={tp1}"
+                    )
 
             if pending:
                 check_pending(pending)
