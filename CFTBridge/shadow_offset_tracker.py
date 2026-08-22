@@ -79,7 +79,12 @@
 # so this variant skips the WAITING_FILL phase entirely.
 SWING_LOOKBACK_CANDLES = 180  # 3h of 1m candles - same window already validated live
 SWING_WINDOW = 3  # a point counts as a swing low/high if it's the extreme within +/-3 candles
-SWING_STOP_BUFFER_PCT = 0.0005  # small buffer beyond the raw extreme, same idea as an ATR pad
+# CORRECTED same day: originally 0.0005 (0.05%) - placing a stop that
+# close to a visible swing point sits almost exactly where a liquidity
+# hunt wick would tag it, defeating the whole point of anchoring to real
+# structure. A stop needs to sit past where price actually gets swept
+# reaching for that liquidity, not just technically beyond the line.
+SWING_STOP_BUFFER_PCT = 0.003
 
 import csv
 import json
