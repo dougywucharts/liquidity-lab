@@ -59,6 +59,27 @@
 # available, fetched live rather than read from the original signal
 # payload. Stop and tp1 stay at BOTFINAL.py's original values, same as
 # the extreme variant.
+#
+# FOURTH VARIANT added 2026-08-21 ("swing_structure"): the first three
+# variants all changed ENTRY timing, holding BOTFINAL's stop/tp1 fixed.
+# This one holds ENTRY fixed (the original golden entry - isolates the
+# effect cleanly) and instead re-anchors stop/target to genuinely
+# visible recent swing structure, checked live against two real open
+# trades: a NEAR long whose real swing lows/highs (fetched live via
+# ccxt) showed the stop already sitting close to a real swing low but
+# the tp1 target sitting ABOVE every real swing high in the lookback
+# window (over-targeting, not just an ATR buffer choice), and an AAVE
+# short showing the same pattern mirrored. Stop = the most extreme
+# recent swing low (Long) / high (Short) in the lookback window, with a
+# small buffer beyond it (same idea as BOTFINAL's own ATR pad on
+# find_stop_level, BOTFINAL.py:740-792). Target = the opposite extreme -
+# the real recent high (Long) / low (Short) instead of BOTFINAL's
+# ATR-buffered local_high/local_low. Entry is assumed already filled at
+# signal time (same assumption BOTFINAL's own outcome tracking makes),
+# so this variant skips the WAITING_FILL phase entirely.
+SWING_LOOKBACK_CANDLES = 180  # 3h of 1m candles - same window already validated live
+SWING_WINDOW = 3  # a point counts as a swing low/high if it's the extreme within +/-3 candles
+SWING_STOP_BUFFER_PCT = 0.0005  # small buffer beyond the raw extreme, same idea as an ATR pad
 
 import csv
 import json
@@ -98,7 +119,7 @@ RESULTS_PATH = LOG_DIR / "shadow_results.csv"
 
 RESULT_FIELDS = [
     "resolved_at", "event_id", "variant", "pair", "session", "direction",
-    "entry", "stop", "tp1", "adj_entry", "adj_stop",
+    "entry", "stop", "tp1", "adj_entry", "adj_stop", "adj_target",
     "outcome", "fill_time", "resolved_time",
 ]
 
@@ -159,6 +180,37 @@ def compute_extreme(direction, entry_min, entry_max, stop):
     if direction == "Short":
         return entry_max, stop
     return entry_min, stop
+
+
+def find_swing_extremes(candles, window=SWING_WINDOW):
+    """Local extrema over the given candle window - a swing low/high is
+    the min/max within a +/-window neighborhood. Same simple method
+    already checked live against real NEAR/AAVE chart structure."""
+    lows, highs = [], []
+    for i in range(window, len(candles) - window):
+        neighborhood = candles[i - window:i + window + 1]
+        lo, hi = candles[i][3], candles[i][2]
+        if lo == min(c[3] for c in neighborhood):
+            lows.append(lo)
+        if hi == max(c[2] for c in neighborhood):
+            highs.append(hi)
+    return lows, highs
+
+
+def compute_swing_structure(direction: str, candles: list) -> tuple[float, float] | tuple[None, None]:
+    """Stop/target anchored to genuinely visible recent swing structure
+    instead of BOTFINAL.py's ATR-padded zone. Returns (None, None) if no
+    swing points were found in the window (too short/flat a lookback)."""
+    lows, highs = find_swing_extremes(candles)
+    if not lows or not highs:
+        return None, None
+    if direction == "Short":
+        swing_stop = max(highs) * (1 + SWING_STOP_BUFFER_PCT)
+        swing_target = min(lows)
+    else:
+        swing_stop = min(lows) * (1 - SWING_STOP_BUFFER_PCT)
+        swing_target = max(highs)
+    return swing_stop, swing_target
 
 
 def compute_recent_candle_entry(direction, symbol):
@@ -249,11 +301,11 @@ def check_pending(pending: dict):
 
             if trade["status"] == "FILLED":
                 stop_hit = h >= trade["adj_stop"] if direction == "Short" else l <= trade["adj_stop"]
-                tp1_hit = l <= trade["tp1"] if direction == "Short" else h >= trade["tp1"]
+                target_hit = l <= trade["adj_target"] if direction == "Short" else h >= trade["adj_target"]
                 outcome = None
                 if stop_hit:
                     outcome = "STOPPED"
-                elif tp1_hit:
+                elif target_hit:
                     outcome = "TP1_HIT"
                 if outcome:
                     log.info(f"RESOLVED [{trade['variant']}] {trade['pair']} {direction} -> {outcome}")
@@ -269,6 +321,7 @@ def check_pending(pending: dict):
                         "tp1": trade["tp1"],
                         "adj_entry": trade["adj_entry"],
                         "adj_stop": trade["adj_stop"],
+                        "adj_target": trade["adj_target"],
                         "outcome": outcome,
                         "fill_time": trade.get("fill_time", ""),
                         "resolved_time": datetime.fromtimestamp(ts / 1000, tz=timezone.utc).isoformat(),
@@ -292,6 +345,7 @@ def check_pending(pending: dict):
                 "tp1": trade["tp1"],
                 "adj_entry": trade["adj_entry"],
                 "adj_stop": trade["adj_stop"],
+                "adj_target": trade["adj_target"],
                 "outcome": outcome,
                 "fill_time": trade.get("fill_time", ""),
                 "resolved_time": datetime.now(timezone.utc).isoformat(),
@@ -345,6 +399,7 @@ def run():
                     "entry": entry,
                     "stop": stop,
                     "tp1": tp1,
+                    "adj_target": tp1,  # default target = original tp1; swing_structure overrides this
                     "status": "WAITING_FILL",
                     "created_ms": created_ms,
                     "last_checked_ts": 0,
@@ -381,6 +436,20 @@ def run():
                         f"TRACKING [candle] {pair} {direction} entry={entry} adj_entry={candle_entry:.6g} "
                         f"stop={stop} adj_stop={stop:.6g} tp1={tp1}"
                     )
+
+                swing_candles = fetch_ohlcv_safe(base_trade["symbol"], limit=SWING_LOOKBACK_CANDLES)
+                if swing_candles:
+                    swing_stop, swing_target = compute_swing_structure(direction, swing_candles)
+                    if swing_stop is not None:
+                        pending[f"{event_id}::swing"] = {
+                            **base_trade, "variant": "swing_structure",
+                            "adj_entry": entry, "adj_stop": swing_stop, "adj_target": swing_target,
+                            "status": "FILLED",  # entry unchanged - assumed already filled, same as BOTFINAL's own tracking
+                        }
+                        log.info(
+                            f"TRACKING [swing] {pair} {direction} entry={entry} (unchanged) "
+                            f"stop={stop} adj_stop={swing_stop:.6g} tp1={tp1} adj_target={swing_target:.6g}"
+                        )
 
             if pending:
                 check_pending(pending)
