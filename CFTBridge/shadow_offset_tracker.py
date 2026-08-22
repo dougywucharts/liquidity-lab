@@ -77,6 +77,16 @@
 # ATR-buffered local_high/local_low. Entry is assumed already filled at
 # signal time (same assumption BOTFINAL's own outcome tracking makes),
 # so this variant skips the WAITING_FILL phase entirely.
+# FIFTH VARIANT added 2026-08-21 ("stop_as_entry"): the classic
+# stop-hunt idea - instead of entering in BOTFINAL's confirmation zone,
+# wait for price to sweep all the way through it to where the ORIGINAL
+# stop sat (the real invalidation point, likely a genuine liquidity
+# pool other traders' stops cluster around), and enter there instead,
+# anticipating the reversal that often follows a stop-hunt sweep. New
+# stop/target are placed as point-distances from that new entry, using
+# the same risk unit (|entry-stop|) and the same reward:risk ratio the
+# original signal already had (BOTFINAL's tp1 is consistently ~2R, but
+# this reuses each signal's own ratio rather than hardcoding 2).
 SWING_LOOKBACK_CANDLES = 180  # 3h of 1m candles - same window already validated live
 SWING_WINDOW = 3  # a point counts as a swing low/high if it's the extreme within +/-3 candles
 # CORRECTED same day: originally 0.0005 (0.05%) - placing a stop that
@@ -216,6 +226,24 @@ def compute_swing_structure(direction: str, candles: list) -> tuple[float, float
         swing_stop = min(lows) * (1 - SWING_STOP_BUFFER_PCT)
         swing_target = max(highs)
     return swing_stop, swing_target
+
+
+def compute_stop_as_entry(direction: str, entry: float, stop: float, tp1: float) -> tuple[float, float, float]:
+    """Entry at the original stop level (the real invalidation point,
+    anticipating a stop-hunt sweep-and-reverse), with a fresh stop/target
+    measured as point-distances from that new entry - same risk unit as
+    the original signal, same reward:risk ratio it already had. Returns
+    (new_entry, new_stop, new_target)."""
+    risk = abs(entry - stop)
+    reward_ratio = abs(tp1 - entry) / risk if risk > 0 else 2.0
+    new_entry = stop
+    if direction == "Short":
+        new_stop = new_entry + risk
+        new_target = new_entry - risk * reward_ratio
+    else:
+        new_stop = new_entry - risk
+        new_target = new_entry + risk * reward_ratio
+    return new_entry, new_stop, new_target
 
 
 def compute_recent_candle_entry(direction, symbol):
@@ -455,6 +483,16 @@ def run():
                             f"TRACKING [swing] {pair} {direction} entry={entry} (unchanged) "
                             f"stop={stop} adj_stop={swing_stop:.6g} tp1={tp1} adj_target={swing_target:.6g}"
                         )
+
+                stop_entry, stop_new_stop, stop_target = compute_stop_as_entry(direction, entry, stop, tp1)
+                pending[f"{event_id}::stophunt"] = {
+                    **base_trade, "variant": "stop_as_entry",
+                    "adj_entry": stop_entry, "adj_stop": stop_new_stop, "adj_target": stop_target,
+                }
+                log.info(
+                    f"TRACKING [stophunt] {pair} {direction} entry={entry} adj_entry={stop_entry:.6g} "
+                    f"stop={stop} adj_stop={stop_new_stop:.6g} tp1={tp1} adj_target={stop_target:.6g}"
+                )
 
             if pending:
                 check_pending(pending)
