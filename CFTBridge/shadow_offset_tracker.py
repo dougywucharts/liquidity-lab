@@ -87,6 +87,25 @@
 # the same risk unit (|entry-stop|) and the same reward:risk ratio the
 # original signal already had (BOTFINAL's tp1 is consistently ~2R, but
 # this reuses each signal's own ratio rather than hardcoding 2).
+#
+# SIXTH VARIANT added 2026-08-21 ("ema_close_confirm"): the user's own
+# previously-profitable discretionary setup - a strong, fast sweep into
+# liquidity leaving a wick (already what SWEEP_CONFIRMED + Sweep+Retest
+# requires to exist as a golden signal at all), then WAIT for a 1m
+# candle to actually CLOSE back on the trade's side of a fast EMA (a
+# real confirmation the reversal is genuine, not just a wick poking
+# through) before entering - not a touch, a close. BOTFINAL.py's own
+# `emaContext` field turned out to just say the literal string "Sweep
+# Confirmed" for every golden signal (checked live 2026-08-21), not a
+# real EMA-relative descriptor, so this is computed fresh from live
+# candles rather than reusing anything BOTFINAL already provides. Uses
+# EMA9 (BOTFINAL's own CFT-side charts already display EMA 9/29/60).
+# Once confirmed, entry = that candle's close; stop/target are
+# point-distances from it using the same risk unit and reward:risk
+# ratio as stop_as_entry, reusing the same projection helper.
+EMA_PERIOD = 9
+EMA_LOOKBACK_CANDLES = 60  # enough real history for EMA9 to be meaningful, not a startup artifact
+
 SWING_LOOKBACK_CANDLES = 180  # 3h of 1m candles - same window already validated live
 SWING_WINDOW = 3  # a point counts as a swing low/high if it's the extreme within +/-3 candles
 # CORRECTED same day: originally 0.0005 (0.05%) - placing a stop that
@@ -228,6 +247,16 @@ def compute_swing_structure(direction: str, candles: list) -> tuple[float, float
     return swing_stop, swing_target
 
 
+def project_stop_target(direction: str, new_entry: float, risk: float, reward_ratio: float) -> tuple[float, float]:
+    """Given a (possibly relocated) entry, project a fresh stop/target as
+    point-distances from it - shared by stop_as_entry and
+    ema_close_confirm, which both relocate entry but want the same
+    original risk unit and reward:risk ratio preserved from it."""
+    if direction == "Short":
+        return new_entry + risk, new_entry - risk * reward_ratio
+    return new_entry - risk, new_entry + risk * reward_ratio
+
+
 def compute_stop_as_entry(direction: str, entry: float, stop: float, tp1: float) -> tuple[float, float, float]:
     """Entry at the original stop level (the real invalidation point,
     anticipating a stop-hunt sweep-and-reverse), with a fresh stop/target
@@ -237,13 +266,40 @@ def compute_stop_as_entry(direction: str, entry: float, stop: float, tp1: float)
     risk = abs(entry - stop)
     reward_ratio = abs(tp1 - entry) / risk if risk > 0 else 2.0
     new_entry = stop
-    if direction == "Short":
-        new_stop = new_entry + risk
-        new_target = new_entry - risk * reward_ratio
-    else:
-        new_stop = new_entry - risk
-        new_target = new_entry + risk * reward_ratio
+    new_stop, new_target = project_stop_target(direction, new_entry, risk, reward_ratio)
     return new_entry, new_stop, new_target
+
+
+def compute_ema_series(closes: list, period: int = EMA_PERIOD) -> list:
+    """Standard EMA, seeded with an SMA of the first `period` closes.
+    Returned list is aligned to closes[period-1:] (index 0 here ==
+    closes[period-1])."""
+    if len(closes) < period:
+        return []
+    k = 2 / (period + 1)
+    ema = [sum(closes[:period]) / period]
+    for c in closes[period:]:
+        ema.append(c * k + ema[-1] * (1 - k))
+    return ema
+
+
+def find_ema_close_confirmation(direction: str, candles: list) -> tuple[float, int] | tuple[None, None]:
+    """Scans candles for the first CLOSE beyond EMA9 in the trade's favor
+    (above for Long, below for Short) - a real confirmation the reversal
+    is genuine, not just a wick poking through. Returns (close_price,
+    candle_ts) of the first confirming candle, or (None, None) if none
+    found yet in this window."""
+    closes = [c[4] for c in candles]
+    ema = compute_ema_series(closes)
+    if not ema:
+        return None, None
+    offset = len(closes) - len(ema)  # ema[i] corresponds to closes[i+offset]
+    for i, ema_val in enumerate(ema):
+        close = closes[i + offset]
+        confirmed = close > ema_val if direction == "Long" else close < ema_val
+        if confirmed:
+            return close, candles[i + offset][0]
+    return None, None
 
 
 def compute_recent_candle_entry(direction, symbol):
@@ -306,6 +362,41 @@ def check_pending(pending: dict):
 
     for event_id, trade in pending.items():
         symbol = trade["symbol"]
+        direction = trade["direction"]
+
+        # ema_close_confirm needs real EMA9 history to be meaningful, not
+        # just the last few candles, and its "fill" condition (a close
+        # beyond a moving EMA value) can't go through the generic
+        # fixed-threshold touch-check below - handled entirely separately
+        # while still WAITING_FILL, then falls through to the same
+        # generic STOPPED/target_hit logic as everything else once filled.
+        if trade["variant"] == "ema_close_confirm" and trade["status"] == "WAITING_FILL":
+            candles = fetch_ohlcv_safe(symbol, limit=EMA_LOOKBACK_CANDLES)
+            time.sleep(0.5)
+            if candles is None:
+                continue
+            # Only candles strictly after signal creation count as a real
+            # confirmation - an EMA relationship from before the signal
+            # even existed isn't a confirmation of anything.
+            post_signal = [c for c in candles if c[0] > trade["created_ms"]]
+            if len(post_signal) < EMA_PERIOD:
+                continue  # not enough real history since signal creation yet
+            close_price, fill_ts = find_ema_close_confirmation(direction, post_signal)
+            if close_price is None:
+                trade["last_checked_ts"] = post_signal[-1][0]
+                continue
+            risk = abs(trade["entry"] - trade["stop"])
+            reward_ratio = abs(trade["tp1"] - trade["entry"]) / risk if risk > 0 else 2.0
+            adj_stop, adj_target = project_stop_target(direction, close_price, risk, reward_ratio)
+            trade["adj_entry"] = close_price
+            trade["adj_stop"] = adj_stop
+            trade["adj_target"] = adj_target
+            trade["status"] = "FILLED"
+            trade["fill_time"] = datetime.fromtimestamp(fill_ts / 1000, tz=timezone.utc).isoformat()
+            trade["last_checked_ts"] = fill_ts
+            log.info(f"  [ema_close_confirm] {trade['pair']} {direction} confirmed at close={close_price:.6g}")
+            continue  # resolve stop/target starting next cycle, same as every other variant
+
         # Small window is enough - we poll every 30s, only new candles
         # since the last check matter. 15 candles of slack covers any
         # gap from a slow cycle or a brief restart.
@@ -319,7 +410,6 @@ def check_pending(pending: dict):
         if not new_candles:
             continue
 
-        direction = trade["direction"]
         for c in new_candles:
             ts, o, h, l, close, v = c
             trade["last_checked_ts"] = ts
@@ -493,6 +583,15 @@ def run():
                     f"TRACKING [stophunt] {pair} {direction} entry={entry} adj_entry={stop_entry:.6g} "
                     f"stop={stop} adj_stop={stop_new_stop:.6g} tp1={tp1} adj_target={stop_target:.6g}"
                 )
+
+                # adj_entry/adj_stop/adj_target are unknown until a real
+                # candle close confirms it - check_pending fills these in
+                # once find_ema_close_confirmation finds one.
+                pending[f"{event_id}::ema"] = {
+                    **base_trade, "variant": "ema_close_confirm",
+                    "adj_entry": None, "adj_stop": None, "adj_target": None,
+                }
+                log.info(f"TRACKING [ema] {pair} {direction} entry={entry} - waiting for a close beyond EMA{EMA_PERIOD}")
 
             if pending:
                 check_pending(pending)
