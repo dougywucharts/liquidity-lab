@@ -320,7 +320,28 @@ def build_alert_payload(pair: str, direction: str, entry: float, stop: float, tp
     polling for the real fill then recomputing SL/TP - Match-Trader can just
     do this natively via dollar_tp/dollar_sl, no polling needed). tp/sl
     stay 0 (unset) - confirmed live that mixing them with dollar_tp/dollar_sl
-    set doesn't conflict."""
+    set doesn't conflict.
+
+    CORRECTED 2026-08-21: order_type switched MARKET -> LIMIT. All 46 real
+    trades so far fired as market orders, and cross-referencing them
+    against BOTFINAL.py's own timestampUtc showed a uniform ~70-131s
+    signal-to-send delay - by the time a market order actually filled, two
+    known cases (BNB, NEAR) had already run PAST golden's own TP1/TP2
+    before the real fill even landed, chasing the tail of a move instead
+    of executing the signal. A LIMIT order at the exact intended entry
+    can't chase - it only fills if price genuinely comes back to that
+    level. Confirmed live before shipping: a real LIMIT alert produced a
+    genuine "Buy Limit" pending order on Match-Trader with TP/SL correctly
+    pre-computed from the limit price (not the market price at send time).
+    Shadow-tracked "wait for touch" logic (sweep_extreme/recent_candle
+    variants) shows a 0% NO_FILL rate across 76 resolved signals, so this
+    isn't expected to meaningfully cost trade volume.
+
+    KNOWN GAP: PickMyTrade has no order-status or cancel API (confirmed -
+    no documented REST endpoint, only the submit webhook), so a pending
+    limit order that never fills can't be cancelled programmatically if
+    the signal goes stale. Worth checking CFT's Pending Orders tab
+    periodically for anything that's been sitting a long time."""
     symbol = map_symbol(pair)
     mult = price_multiplier(pair)
     return {
@@ -339,7 +360,7 @@ def build_alert_payload(pair: str, direction: str, entry: float, stop: float, tp
         "token": PICKMYTRADE_TOKEN,
         "duplicate_position_allow": False,
         "platform": "MATCHTRADER",
-        "order_type": "MARKET",
+        "order_type": "LIMIT",
         # NOT "CFD" - PickMyTrade's own pre-existing symbol registry files
         # every CFT Match-Trader crypto pair (confirmed for ETH/ADA/SAND/STX
         # via their Settings page) under FOREXCFD specifically. Sending
@@ -448,6 +469,20 @@ def run():
                     if age_seconds > MAX_SIGNAL_AGE_SECONDS:
                         log.info(f"Skipping {event_id} - stale ({age_seconds:.0f}s old)")
                         continue
+
+                # BOTFINAL.py already flags a signal "MOVED" (vs "OK") when
+                # price has progressed too far past the entry zone toward
+                # tp1 by the time it computes the plan (build_rr_plan's own
+                # `progress` check, BOTFINAL.py:838-873) - found live
+                # 2026-08-21 via a real BCH/USDT card showing STATE: MOVED
+                # on the dashboard that this executor would have traded
+                # identically to a fresh OK signal, since nothing here ever
+                # looked at this field. BOTFINAL is already telling us not
+                # to trust this zone - listen to it instead of re-deriving
+                # the same judgment ourselves via check_market_state alone.
+                if event.get("state") == "MOVED":
+                    log.info(f"Skipping {event_id} - BOTFINAL flagged this signal MOVED (entry zone already stale)")
+                    continue
 
                 direction = event.get("directionBias")
                 entry = event.get("entry")
