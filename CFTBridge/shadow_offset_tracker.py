@@ -135,7 +135,17 @@ log = logging.getLogger("shadow_offset_tracker")
 LLAB_API_BASE = os.getenv("LLAB_API_BASE", "https://liquidity-lab-api.onrender.com")
 POLL_INTERVAL_SECONDS = 30
 MAX_SIGNAL_AGE_SECONDS = 300  # same staleness bar as pmt_executor.py
-TRACK_MAX_HOURS = 8  # matches BOTFINAL.py's OUTCOME_TRACK_MAX_HOURS
+TRACK_MAX_HOURS = 8  # matches BOTFINAL.py's OUTCOME_TRACK_MAX_HOURS - governs
+# how long a FILLED trade gets to resolve to STOPPED/TP1_HIT before EXPIRED.
+
+# CORRECTED 2026-08-22: WAITING_FILL trades were using the same 8h window
+# before counting as NO_FILL - far too generous. Sweep+Retest is a
+# short-term pattern; if price hasn't returned to the entry within
+# minutes, that move is gone and a fill hours later isn't a real
+# execution of the original setup, it's noise being miscounted as a
+# legitimate data point. This governs how long WAITING_FILL trades get
+# before NO_FILL, separate from (and much shorter than) TRACK_MAX_HOURS.
+FILL_WINDOW_MINUTES = 15
 
 ENTRY_OFFSET_PCT = 0.25
 STOP_OFFSET_PCT = 0.50
@@ -384,6 +394,27 @@ def check_pending(pending: dict):
             close_price, fill_ts = find_ema_close_confirmation(direction, post_signal)
             if close_price is None:
                 trade["last_checked_ts"] = post_signal[-1][0]
+                age_minutes = (time.time() * 1000 - trade["created_ms"]) / 60_000
+                if age_minutes >= FILL_WINDOW_MINUTES:
+                    log.info(f"RESOLVED [ema_close_confirm] {trade['pair']} {direction} -> NO_FILL (timed out)")
+                    append_result({
+                        "resolved_at": datetime.now(timezone.utc).isoformat(),
+                        "event_id": event_id,
+                        "variant": trade["variant"],
+                        "pair": trade["pair"],
+                        "session": trade["session"],
+                        "direction": direction,
+                        "entry": trade["entry"],
+                        "stop": trade["stop"],
+                        "tp1": trade["tp1"],
+                        "adj_entry": trade["adj_entry"],
+                        "adj_stop": trade["adj_stop"],
+                        "adj_target": trade["adj_target"],
+                        "outcome": "NO_FILL",
+                        "fill_time": "",
+                        "resolved_time": datetime.now(timezone.utc).isoformat(),
+                    })
+                    resolved_ids.append(event_id)
                 continue
             risk = abs(trade["entry"] - trade["stop"])
             reward_ratio = abs(trade["tp1"] - trade["entry"]) / risk if risk > 0 else 2.0
@@ -452,8 +483,13 @@ def check_pending(pending: dict):
                     resolved_ids.append(event_id)
                     break
 
-        age_hours = (time.time() * 1000 - trade["created_ms"]) / 3_600_000
-        if event_id not in resolved_ids and age_hours >= TRACK_MAX_HOURS:
+        age_minutes = (time.time() * 1000 - trade["created_ms"]) / 60_000
+        timed_out = (
+            trade["status"] == "WAITING_FILL" and age_minutes >= FILL_WINDOW_MINUTES
+        ) or (
+            trade["status"] == "FILLED" and age_minutes >= TRACK_MAX_HOURS * 60
+        )
+        if event_id not in resolved_ids and timed_out:
             outcome = "NO_FILL" if trade["status"] == "WAITING_FILL" else "EXPIRED"
             log.info(f"RESOLVED [{trade['variant']}] {trade['pair']} {direction} -> {outcome} (timed out)")
             append_result({
